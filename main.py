@@ -85,6 +85,7 @@ class GameListEditor:
         self.xml_root: ET.Element | None = None
         self.xml_path: Path | None = None
         self.dictionary: dict[str, str] = {}
+        self.dictionary_path = Path(__file__).with_name("titles_ja.csv")
         self.has_unsaved_changes = False
         self._build_ui()
         self._load_dictionary()
@@ -144,7 +145,7 @@ class GameListEditor:
         ).pack(fill="x", pady=(4, 0))
 
     def _load_dictionary(self):
-        self.dictionary = load_dictionary(Path(__file__).with_name("titles_ja.csv"))
+        self.dictionary = load_dictionary(self.dictionary_path)
 
     def choose_folder(self):
         selected = filedialog.askdirectory(title="システムフォルダを選択")
@@ -400,7 +401,8 @@ class GameListEditor:
         )
         if not path:
             return
-        self.dictionary = load_dictionary(Path(path))
+        self.dictionary_path = Path(path)
+        self._load_dictionary()
         self.scan_titles()
         messagebox.showinfo("辞書", f"{len(self.dictionary)} 件の辞書データを読み込みました。")
 
