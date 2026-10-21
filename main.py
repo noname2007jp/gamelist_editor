@@ -10,6 +10,8 @@ import xml.etree.ElementTree as ET
 from pathlib import Path
 from tkinter import filedialog, messagebox, ttk
 
+from cjk_language_chars import SIMPLIFIED_CHARS, TRADITIONAL_CHARS
+
 APP_TITLE = "gamelist_editor"
 NAME_TAGS = ("zh_CN", "en_US", "zh_TW", "ko_KR", "name")
 ROM_EXTENSIONS = {
@@ -47,11 +49,31 @@ def load_dictionary(csv_path: Path) -> dict[str, str]:
 
 
 def contains_japanese_kana(value: str) -> bool:
-    """Return True only when text contains Japanese hiragana or katakana.
-
-    CJK kanji alone is not enough to distinguish Japanese from Chinese.
-    """
+    """Detect Japanese kana, which is a strong signal of Japanese text."""
     return bool(re.search(r"[ぁ-ゖァ-ヺー]", value))
+
+
+def is_japanese_or_shared_kanji(value: str) -> bool:
+    """Heuristically distinguish Japanese titles from Chinese-only titles.
+
+    Kana wins immediately. Without kana, use Unihan's character variants:
+    characters with simplified variants signal Traditional Chinese; characters
+    with traditional variants signal Simplified Chinese. If neither signal
+    appears, the text may use only shared CJK characters, so treat it as
+    Japanese-compatible rather than confidently identifying its language.
+    """
+    if contains_japanese_kana(value):
+        return True
+
+    traditional_count = sum(1 for char in value if char in TRADITIONAL_CHARS)
+    simplified_count = sum(1 for char in value if char in SIMPLIFIED_CHARS)
+
+    if traditional_count or simplified_count:
+        # Chinese-specific character forms outweigh shared kanji. Ties are
+        # treated as ambiguous/non-Japanese to avoid accepting Chinese titles.
+        return traditional_count == 0 and simplified_count == 0
+
+    return bool(re.search(r"[一-龯㐀-䶿]", value))
 
 
 def text_of(game: ET.Element, tag: str) -> str:
@@ -211,7 +233,7 @@ class GameListEditor:
             filename = Path(path_text.replace("\\", "/")).name
             current = text_of(game, "name") or text_of(game, "zh_CN") or text_of(game, "en_US")
             candidate = self.dictionary.get(local_key(filename), "")
-            status = "辞書一致" if candidate else ("日本語あり" if contains_japanese_kana(current) else "未取得")
+            status = "辞書一致" if candidate else ("日本語あり" if is_japanese_or_shared_kanji(current) else "未取得")
             iid = self.tree.insert("", "end", values=(path_text, current, candidate, status))
             self.tree_to_game[iid] = game
             self.tree_to_title[iid] = candidate
@@ -321,7 +343,7 @@ class GameListEditor:
                 matched += 1
             else:
                 current = text_of(game, "name") or text_of(game, "zh_CN") or text_of(game, "en_US")
-                if contains_japanese_kana(current):
+                if is_japanese_or_shared_kanji(current):
                     self.tree_to_title[iid] = current
                     self.tree_to_status[iid] = "日本語あり"
                 else:
