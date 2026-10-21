@@ -6,6 +6,7 @@ on:
     branches: [main]
     paths:
       - "main.py"
+      - "cjk_language_chars.py"
       - "requirements.txt"
       - "build.bat"
       - ".github/workflows/build.yml"
