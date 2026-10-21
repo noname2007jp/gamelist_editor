@@ -5,12 +5,17 @@ import os
 import re
 import shutil
 import sys
+import sqlite3
+import threading
 import tkinter as tk
 import xml.etree.ElementTree as ET
 from pathlib import Path
 from tkinter import filedialog, messagebox, ttk
 
 from cjk_language_chars import SIMPLIFIED_CHARS, TRADITIONAL_CHARS
+from romtitler.dat_parser import build_database, find_match
+from romtitler.hashing import hash_file
+from romtitler.online_dat import DEFAULT_SYSTEMS, download_dat_files
 
 APP_TITLE = "gamelist_editor"
 NAME_TAGS = ("zh_CN", "en_US", "zh_TW", "ko_KR", "name")
@@ -113,6 +118,8 @@ class GameListEditor:
         self.tree_to_path: dict[str, str] = {}
         self.tree_to_new: dict[str, bool] = {}
         self.tree_to_dirty: dict[str, bool] = {}
+        self.online_titles: dict[str, str] = {}
+        self.online_busy = False
         self.xml_root: ET.Element | None = None
         self.xml_path: Path | None = None
         self.dictionary: dict[str, str] = {}
@@ -137,21 +144,25 @@ class GameListEditor:
         action_row.pack(fill="x", pady=(0, 8))
         ttk.Button(action_row, text="ROMを選択して登録", command=self.add_roms).pack(side="left")
         ttk.Button(action_row, text="日本語名候補を取得", command=self.scan_titles).pack(side="left", padx=6)
+        self.online_button = ttk.Button(action_row, text="オンラインROM照合", command=self.scan_online_dat)
+        self.online_button.pack(side="left", padx=(0, 6))
         ttk.Button(action_row, text="日本語名を保存", command=self.save_titles).pack(side="left")
         ttk.Button(action_row, text="辞書CSVを開く", command=self.open_dictionary).pack(side="left", padx=6)
 
         table_frame = ttk.Frame(outer)
         table_frame.pack(fill="both", expand=True)
-        columns = ("path", "current", "candidate", "status")
+        columns = ("path", "current", "candidate", "online", "status")
         self.tree = ttk.Treeview(table_frame, columns=columns, show="headings", selectmode="browse")
         self.tree.heading("path", text="ROM / XML path")
         self.tree.heading("current", text="現在の名前")
         self.tree.heading("candidate", text="日本語名（編集対象）")
+        self.tree.heading("online", text="オンラインDAT照合名")
         self.tree.heading("status", text="判定")
         self.tree.column("path", width=390, minwidth=220)
         self.tree.column("current", width=210, minwidth=130)
-        self.tree.column("candidate", width=250, minwidth=150)
-        self.tree.column("status", width=100, minwidth=80, stretch=False)
+        self.tree.column("candidate", width=220, minwidth=150)
+        self.tree.column("online", width=260, minwidth=160)
+        self.tree.column("status", width=125, minwidth=90, stretch=False)
         yscroll = ttk.Scrollbar(table_frame, orient="vertical", command=self.tree.yview)
         xscroll = ttk.Scrollbar(table_frame, orient="horizontal", command=self.tree.xview)
         self.tree.configure(yscrollcommand=yscroll.set, xscrollcommand=xscroll.set)
@@ -234,7 +245,8 @@ class GameListEditor:
             current = text_of(game, "name") or text_of(game, "zh_CN") or text_of(game, "en_US")
             candidate = self.dictionary.get(local_key(filename), "")
             status = "辞書一致" if candidate else ("日本語あり" if is_japanese_or_shared_kanji(current) else "未取得")
-            iid = self.tree.insert("", "end", values=(path_text, current, candidate, status))
+            online_title = self.online_titles.get(normalized_xml_path(path_text), "")
+            iid = self.tree.insert("", "end", values=(path_text, current, candidate, online_title, status))
             self.tree_to_game[iid] = game
             self.tree_to_title[iid] = candidate
             self.tree_to_status[iid] = status
@@ -352,6 +364,112 @@ class GameListEditor:
             self.tree.set(iid, "candidate", self.tree_to_title[iid])
             self.tree.set(iid, "status", self.tree_to_status[iid])
         self.status_var.set(f"辞書照合完了：{matched} 件一致。未取得の名称は手動入力できます。")
+
+
+    def scan_online_dat(self):
+        """Download/update public DATs and match registered ROMs without blocking the GUI."""
+        if self.online_busy:
+            return
+        folder = self.folder()
+        if folder is None:
+            return
+        if self.xml_root is None or self.xml_path is None:
+            self.load_gamelist()
+            if self.xml_root is None or self.xml_path is None:
+                return
+
+        jobs = []
+        assert self.tree is not None
+        for iid in self.tree.get_children():
+            xml_path = self.tree_to_path.get(iid, "")
+            if not xml_path:
+                continue
+            relative = xml_path.replace("\\\\", "/").removeprefix("./")
+            rom_path = (folder / relative).resolve()
+            if rom_path.is_file():
+                jobs.append((iid, xml_path, rom_path))
+
+        if not jobs:
+            messagebox.showinfo("オンラインROM照合", "照合対象のROMファイルがありません。")
+            return
+
+        local_appdata = os.environ.get("LOCALAPPDATA")
+        cache_root = Path(local_appdata) / "gamelist_editor" / "romtitler" if local_appdata else Path.home() / ".gamelist_editor" / "romtitler"
+        dat_dir = cache_root / "dats"
+        db_path = cache_root / "romtitler.sqlite3"
+        self.online_busy = True
+        self.online_button.configure(state="disabled")
+        self.status_var.set("オンラインDATを取得・更新しています。完了までお待ちください…")
+
+        def worker():
+            result = {"titles": {}, "warnings": [], "error": ""}
+            try:
+                changed, warnings = download_dat_files(dat_dir, list(DEFAULT_SYSTEMS))
+                result["warnings"] = warnings
+                if changed or not db_path.exists():
+                    imported, count = build_database(dat_dir, db_path)
+                    result["database"] = f"DAT {imported} ファイル / ROM {count:,} 件"
+                connection = sqlite3.connect(db_path)
+                connection.row_factory = sqlite3.Row
+                try:
+                    total = len(jobs)
+                    for index, (_iid, xml_path, rom_path) in enumerate(jobs, 1):
+                        primary = hash_file(rom_path, include_secondary=False)
+                        matches = []
+                        if primary:
+                            for candidate in primary:
+                                matches = find_match(connection, candidate.crc32, candidate.size, candidate.md5, candidate.sha1)
+                                if matches:
+                                    break
+                        if not matches:
+                            secondary = hash_file(rom_path, include_secondary=True)
+                            for candidate in secondary:
+                                matches = find_match(connection, candidate.crc32, candidate.size, candidate.md5, candidate.sha1)
+                                if matches:
+                                    break
+                        if matches:
+                            names = list(dict.fromkeys(str(row["name"]) for row in matches))
+                            result["titles"][normalized_xml_path(xml_path)] = " / ".join(names[:3])
+                        self.root.after(0, lambda i=index, t=total: self.status_var.set(f"オンラインDAT照合中：{i}/{t}"))
+                finally:
+                    connection.close()
+            except Exception as exc:
+                result["error"] = str(exc)
+            self.root.after(0, lambda: self._finish_online_dat(result, len(jobs)))
+
+        threading.Thread(target=worker, daemon=True).start()
+
+    def _finish_online_dat(self, result, total: int):
+        self.online_busy = False
+        self.online_button.configure(state="normal")
+        if result.get("error"):
+            messagebox.showerror("オンラインROM照合エラー", result["error"])
+            self.status_var.set("オンラインROM照合に失敗しました。")
+            return
+        self.online_titles.update(result.get("titles", {}))
+        assert self.tree is not None
+        matched = 0
+        for iid in self.tree.get_children():
+            xml_path = self.tree_to_path.get(iid, "")
+            title = self.online_titles.get(normalized_xml_path(xml_path), "")
+            self.tree.set(iid, "online", title)
+            if title:
+                matched += 1
+                if not self.tree_to_title.get(iid):
+                    self.tree_to_status[iid] = "DAT一致・日本語未確認"
+                    self.tree.set(iid, "status", self.tree_to_status[iid])
+        warning_count = len(result.get("warnings", []))
+        detail = f"オンラインDAT照合完了：{matched}/{total} 件一致。"
+        detail += " DAT名は日本語タイトルとは限らないため、日本語名欄には自動転記していません。"
+        if warning_count:
+            detail += f" DAT取得警告 {warning_count} 件（キャッシュ利用の場合があります）。"
+        if result.get("database"):
+            detail += " " + result["database"] + "。"
+        self.status_var.set(detail)
+        if warning_count:
+            messagebox.showwarning("オンラインROM照合", detail + "\n\n" + "\n".join(result["warnings"][:8]))
+        else:
+            messagebox.showinfo("オンラインROM照合", detail)
 
     def on_select(self, _event=None):
         assert self.tree is not None
