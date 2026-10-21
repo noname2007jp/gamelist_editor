@@ -8,6 +8,7 @@ on:
       - "main.py"
       - "cjk_language_chars.py"
       - "romtitler/**"
+      - "romtitler_cli.py"
       - "tests/**"
       - "requirements.txt"
       - "requirements-dev.txt"
