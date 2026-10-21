@@ -12,6 +12,7 @@ Windows向け `gamelist.xml` 編集ツールです。Python標準のTkinterで�
 - 日本語名辞書CSVによる候補照合と、画面上での手動修正
 - 保存時に既存 `gamelist.xml.bak` を作成
 - 日本語名の確定値を `<zh_CN>`, `<en_US>`, `<zh_TW>`, `<ko_KR>`, `<name>` に反映
+- **Phase 1追加:** ROMのハッシュ抽出とNo-Intro/Redump形式DATのオフライン照合を行うCLI
 
 ## 使い方
 
@@ -22,6 +23,48 @@ Windows向け `gamelist.xml` 編集ツールです。Python標準のTkinterで�
 5. `日本語名候補を取得` でローカル辞書と照合します。
 6. 一覧のゲームを選択し、下の入力欄でタイトルを修正して `一覧に反映` を押します。
 7. `日本語名を保存` でXMLに保存します。新規登録したROMもこの操作で保存されます。
+
+## ROMハッシュ・DAT照合（Phase 1）
+
+この機能は既存のGUIとは別のCLIとして追加しています。ROMのファイル名変更や移動は行いません。DAT照合結果は必ずCSVへ出力します。
+
+### 使い方
+
+Python 3.11以降でリポジトリのルートから実行します。
+
+```powershell
+# DATを格納するフォルダを準備（No-Intro / RedumpのLogiqx XML形式）
+# 例: D:\ROM-DAT\ に機種ごとの .dat / .xml ファイルを配置
+
+python -m romtitler scan "D:\ROMs" --dat-dir "D:\ROM-DAT" --output "D:\results\romtitler_results.csv" --db "D:\results\romtitler.sqlite3"
+```
+
+DATを追加・更新した場合は `--rebuild-db` を付けてSQLiteインデックスを作り直してください。
+
+```powershell
+python -m romtitler scan "D:\ROMs" --dat-dir "D:\ROM-DAT" --output ".\romtitler_results.csv" --db ".\romtitler.sqlite3" --rebuild-db
+```
+
+### Phase 1の動作範囲
+
+- ZIPは展開せず、セントラルディレクトリのCRC32とサイズを利用します。ZIP内に複数のファイルがあれば各エントリを候補として扱います。
+- ZIP内エントリと通常ファイルのハッシュはストリーミング処理し、ファイル全体をメモリに読み込みません。
+- iNESヘッダー、SNESコピーヘッダー、および拡張子が `.lnx` / `.a78` のAtariヘッダーについて、ヘッダーあり・除去後の候補を作ります。
+- Logiqx XML DATの `game` / `machine` と `rom` 属性をSQLiteに取り込み、CRC32＋サイズ、MD5、SHA1で照合します。
+- CSV列: `file_path, system, crc32, md5, sha1, matched_title, title_ja, source, confidence, status, hash_variant, note`。`title_ja` はPhase 1では自動翻訳しないため空欄です。
+- `.cue` / `.m3u` はサイドカーとしてスキップし、CHDは内部データのハッシュ変換に専用ライブラリが必要なため `unsupported` として出力します。7z/RARの内部エントリ走査、Wii/GCのGameTDB照合、MAME listxml照合は後続フェーズです。
+- DAT一致時の `matched_title` はDATの名称を保持します（例: `Example Game (Japan)`）。同一ハッシュに異なるタイトルが複数ある場合は `note` に警告を記録します。
+
+### 受け入れテスト
+
+開発環境で次を実行します。
+
+```powershell
+python -m pip install -r requirements-dev.txt
+python -m pytest -q
+```
+
+テストにはiNESヘッダー除去、ZIPのCRC32取得、Logiqx XML DATのSQLite取り込みと完全一致照合を含みます。
 
 ## 日本語名辞書
 
@@ -39,11 +82,12 @@ Super Mario World (Japan).sfc,スーパーマリオワールド
 
 ## WindowsでEXEを作る
 
-Python 3.10以降をインストールしたWindowsで、リポジトリ内の `build.bat` を実行します。ビルド結果は `dist/gamelist_editor.exe` です。
+Python 3.10以降をインストールしたWindowsで、リポジトリ内の `build.bat` を実行します。ビルド結果は `dist/gamelist_editor.exe` です。ROM照合CLIは別途Python 3.11以降で実行してください。
 
 ## 注意点 / 今後の拡張
 
-- 現在の日本語名自動取得はローカルCSV辞書までです。外部データベース検索はまだ実装していません。
+- 現在のGUIでの日本語名自動取得はローカルCSV辞書までです。ScreenScraper APIやファジーマッチは未実装です。
+- DATファイルはユーザーが用意してください。DAT配布元の利用条件を確認し、DATそのものをこのリポジトリにコミットしないでください。
 - `gamelist.xml` は保存時にXMLとして再整形されます。独自タグの値は保持する設計ですが、コメントや空白などの書式は保持されない場合があります。
 - 既存ゲームがない新規 `gamelist.xml` では、機種固有の必須項目を自動生成できないため、基本的な `<game>` 項目のみ作成します。
 - ゲームIDや独自項目の採番・必須値は、実機側の仕様に応じた確認が必要です。
