@@ -85,6 +85,7 @@ class GameListEditor:
         self.xml_root: ET.Element | None = None
         self.xml_path: Path | None = None
         self.dictionary: dict[str, str] = {}
+        self.has_unsaved_changes = False
         self._build_ui()
         self._load_dictionary()
 
@@ -167,6 +168,7 @@ class GameListEditor:
         if folder is None:
             return
         self.xml_path = folder / "gamelist.xml"
+        self.has_unsaved_changes = False
         if self.xml_path.exists():
             try:
                 tree = ET.parse(self.xml_path)
@@ -280,6 +282,8 @@ class GameListEditor:
             existing.add(key)
             added += 1
         self.refresh_table()
+        if added:
+            self.has_unsaved_changes = True
         msg = f"{added} 件を登録候補に追加しました。\nまだ gamelist.xml には保存していません。"
         if skipped:
             msg += "\n\nスキップ:\n" + "\n".join(skipped[:15])
@@ -340,6 +344,7 @@ class GameListEditor:
         self.tree_to_status[iid] = "手動設定"
         self.tree.set(iid, "candidate", title)
         self.tree.set(iid, "status", "手動設定")
+        self.has_unsaved_changes = True
         self.status_var.set(f"名称候補を更新しました：{title}")
 
     def save_titles(self):
@@ -355,11 +360,13 @@ class GameListEditor:
                 old = [text_of(game, tag) for tag in NAME_TAGS]
                 if any(value != title for value in old):
                     changes.append((game, title))
-        if not changes:
+        if not changes and not self.has_unsaved_changes:
             messagebox.showinfo("保存", "保存対象の変更はありません。")
             return
-        if not messagebox.askyesno("確認", f"{len(changes)} 件のゲーム名を更新します。\nバックアップを作成して保存しますか？"):
+        prompt = f"日本語名の更新：{len(changes)} 件\nXMLへの新規登録を含めて保存します。\nバックアップを作成してよろしいですか？"
+        if not messagebox.askyesno("確認", prompt):
             return
+        backup_created = self.xml_path.exists()
         try:
             self._backup_and_write()
             for game, title in changes:
@@ -369,9 +376,11 @@ class GameListEditor:
         except (OSError, ET.ParseError) as exc:
             messagebox.showerror("保存エラー", str(exc))
             return
+        self.has_unsaved_changes = False
         self.refresh_table()
-        self.status_var.set(f"保存完了：{len(changes)} 件のゲーム名を更新しました。")
-        messagebox.showinfo("保存完了", f"gamelist.xml を保存しました。\nバックアップ：{self.xml_path}.bak")
+        self.status_var.set(f"保存完了：日本語名 {len(changes)} 件更新")
+        backup_text = f"バックアップ：{self.xml_path}.bak" if backup_created else "新規作成のためバックアップはありません。"
+        messagebox.showinfo("保存完了", f"gamelist.xml を保存しました。\n{backup_text}")
 
     def _backup_and_write(self):
         if self.xml_path and self.xml_path.exists():
