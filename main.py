@@ -46,6 +46,14 @@ def load_dictionary(csv_path: Path) -> dict[str, str]:
     return result
 
 
+def contains_japanese_kana(value: str) -> bool:
+    """Return True only when text contains Japanese hiragana or katakana.
+
+    CJK kanji alone is not enough to distinguish Japanese from Chinese.
+    """
+    return bool(re.search(r"[ぁ-ゖァ-ヺー]", value))
+
+
 def text_of(game: ET.Element, tag: str) -> str:
     node = game.find(tag)
     return (node.text or "").strip() if node is not None else ""
@@ -203,7 +211,7 @@ class GameListEditor:
             filename = Path(path_text.replace("\\", "/")).name
             current = text_of(game, "name") or text_of(game, "zh_CN") or text_of(game, "en_US")
             candidate = self.dictionary.get(local_key(filename), "")
-            status = "辞書一致" if candidate else ("日本語あり" if re.search(r"[ぁ-んァ-ヶ一-龠]", current) else "未取得")
+            status = "辞書一致" if candidate else ("日本語あり" if contains_japanese_kana(current) else "未取得")
             iid = self.tree.insert("", "end", values=(path_text, current, candidate, status))
             self.tree_to_game[iid] = game
             self.tree_to_title[iid] = candidate
@@ -313,7 +321,7 @@ class GameListEditor:
                 matched += 1
             else:
                 current = text_of(game, "name") or text_of(game, "zh_CN") or text_of(game, "en_US")
-                if re.search(r"[ぁ-んァ-ヶ一-龠]", current):
+                if contains_japanese_kana(current):
                     self.tree_to_title[iid] = current
                     self.tree_to_status[iid] = "日本語あり"
                 else:
