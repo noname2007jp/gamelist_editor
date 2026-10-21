@@ -3,6 +3,7 @@ from __future__ import annotations
 import time
 import urllib.error
 import urllib.request
+from urllib.parse import quote
 from pathlib import Path
 
 # Public DAT files maintained by libretro-database. The repository documents
@@ -80,7 +81,7 @@ def download_dat_files(
         target = dat_dir / filename
         if target.exists() and not force and now - target.stat().st_mtime < UPDATE_INTERVAL_SECONDS:
             continue
-        url = BASE_URL + urllib.request.quote(filename, safe="")
+        url = BASE_URL + quote(filename, safe="")
         request = urllib.request.Request(url, headers={"User-Agent": USER_AGENT})
         temp = target.with_suffix(target.suffix + ".download")
         try:
