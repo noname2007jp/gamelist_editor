@@ -33,9 +33,6 @@ Windows向け `gamelist.xml` 編集ツールです。Python標準のTkinterで�
 Python 3.11以降でリポジトリのルートから実行します。
 
 ```powershell
-# DATを格納するフォルダを準備（No-Intro / RedumpのLogiqx XML形式）
-# 例: D:\ROM-DAT\ に機種ごとの .dat / .xml ファイルを配置
-
 python -m romtitler scan "D:\ROMs" --output "D:\results\romtitler_results.csv"
 
 # DATだけを先に取得・更新する
@@ -48,7 +45,7 @@ python -m romtitler update-dat --systems nes snes megadrive
 DATは通常7日ごとに更新確認し、更新された場合はSQLiteインデックスを自動で再作成します。手動で強制更新する場合は `scan --update-dat`、オフラインで既存DBを使う場合は `scan --offline` を指定します。DATをローカルで手動追加・変更した場合は `--rebuild-db` を付けてください。
 
 ```powershell
-python -m romtitler scan "D:\ROMs" --dat-dir "D:\ROM-DAT" --output ".\romtitler_results.csv" --db ".\romtitler.sqlite3" --rebuild-db
+python -m romtitler scan "D:\ROMs" --offline --dat-dir "D:\ROM-DAT" --output ".\romtitler_results.csv" --db ".\romtitler.sqlite3" --rebuild-db
 ```
 
 ### Phase 1の動作範囲
@@ -71,7 +68,7 @@ python -m pip install -r requirements-dev.txt
 python -m pytest -q
 ```
 
-テストにはiNESヘッダー除去、ZIPのCRC32取得、Logiqx XML DATのSQLite取り込みと完全一致照合を含みます。
+テストにはiNESヘッダー除去、ZIPのCRC32取得、Logiqx XMLおよびclrmamepro DATのSQLite取り込みと完全一致照合を含みます。
 
 ## 日本語名辞書
 
