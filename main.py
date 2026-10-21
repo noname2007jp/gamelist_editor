@@ -4,6 +4,7 @@ import csv
 import os
 import re
 import shutil
+import sys
 import tkinter as tk
 import xml.etree.ElementTree as ET
 from pathlib import Path
@@ -85,7 +86,8 @@ class GameListEditor:
         self.xml_root: ET.Element | None = None
         self.xml_path: Path | None = None
         self.dictionary: dict[str, str] = {}
-        self.dictionary_path = Path(__file__).with_name("titles_ja.csv")
+        app_dir = Path(sys.executable).resolve().parent if getattr(sys, "frozen", False) else Path(__file__).resolve().parent
+        self.dictionary_path = app_dir / "titles_ja.csv"
         self.has_unsaved_changes = False
         self._build_ui()
         self._load_dictionary()
