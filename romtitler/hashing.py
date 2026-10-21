@@ -2,7 +2,6 @@ from __future__ import annotations
 
 import hashlib
 import os
-import re
 import zipfile
 import zlib
 from pathlib import Path
@@ -11,8 +10,8 @@ from typing import BinaryIO, Iterator
 from .models import HashCandidate
 
 CHUNK_SIZE = 1024 * 1024
-DISK_IMAGE_EXTENSIONS = {".iso", ".chd", ".rvz", ".wbfs", ".wud"}
 IGNORED_EXTENSIONS = {".cue", ".m3u"}
+UNSUPPORTED_ARCHIVES = {".7z", ".rar"}
 
 
 def _read_prefix(stream: BinaryIO, size: int = 16) -> bytes:
@@ -31,8 +30,7 @@ def detect_header(stream: BinaryIO, size: int, filename: str) -> tuple[int, str]
         return 16, "ines_header_removed"
     if ext in {".smc", ".sfc"} and size % 1024 == 512 and size > 512:
         return 512, "snes_copier_header_removed"
-    # These formats commonly have 64/128-byte headers. Only strip 128 bytes for
-    # their explicit extensions; do not guess from size alone.
+    # Only use the Atari header rule for explicit formats; size alone is ambiguous.
     if ext in {".lnx", ".a78"} and size > 128:
         return 128, "atari_header_removed"
     return None
@@ -55,62 +53,57 @@ def _hash_stream(stream: BinaryIO, skip: int = 0) -> tuple[int, str, str, str]:
     return size, f"{crc & 0xffffffff:08x}", md5.hexdigest(), sha1.hexdigest()
 
 
-def _candidate(path: Path, member: str, stream: BinaryIO, variant: str, skip: int = 0,
-               known_crc: str | None = None, known_size: int | None = None) -> HashCandidate:
-    size, crc, md5, sha1 = _hash_stream(stream, skip)
-    if known_crc is not None and skip == 0:
-        crc = known_crc.lower().zfill(8)
-    if known_size is not None and skip == 0:
-        size = known_size
-    return HashCandidate(str(path), member, variant, size, crc, md5, sha1)
+def hash_file(path: Path, include_secondary: bool = False) -> list[HashCandidate]:
+    """Return raw hash candidates, optionally including headerless candidates.
 
-
-def hash_file(path: Path) -> list[HashCandidate]:
-    """Hash a ROM or each regular entry in a ZIP without extracting it."""
+    For ZIPs, the first pass reads CRC32 and uncompressed size from the central
+    directory without decompressing entries. MD5/SHA1 and headerless hashes are
+    calculated only on the secondary pass when CRC+size did not resolve every entry.
+    """
     path = Path(path)
     ext = path.suffix.lower()
-    if ext in IGNORED_EXTENSIONS:
+    if ext in IGNORED_EXTENSIONS or ext == ".chd" or ext in UNSUPPORTED_ARCHIVES:
         return []
-    if ext == ".chd":
-        return []  # CHD's internal data requires chdman/libchdr; not raw-file SHA1.
+    if ext == ".zip" and not zipfile.is_zipfile(path):
+        return []
+
     candidates: list[HashCandidate] = []
     if zipfile.is_zipfile(path):
         try:
             with zipfile.ZipFile(path, "r") as archive:
                 for info in archive.infolist():
-                    if info.is_dir():
+                    if info.is_dir() or Path(info.filename).suffix.lower() in IGNORED_EXTENSIONS:
                         continue
-                    member_ext = Path(info.filename).suffix.lower()
-                    if member_ext in IGNORED_EXTENSIONS:
+                    member = info.filename
+                    raw_crc = f"{info.CRC:08x}"
+                    if not include_secondary:
+                        candidates.append(HashCandidate(str(path), member, "raw", info.file_size, raw_crc, "", ""))
                         continue
                     with archive.open(info, "r") as stream:
-                        # ZipInfo.CRC is available from the central directory, so the
-                        # raw CRC can be recorded without decompressing the member.
-                        raw = _candidate(path, info.filename, stream, "raw",
-                                         known_crc=f"{info.CRC:08x}", known_size=info.file_size)
-                        candidates.append(raw)
-                        # Hash a second candidate only when a known header is detected.
+                        raw_size, _, md5, sha1 = _hash_stream(stream)
+                        candidates.append(HashCandidate(str(path), member, "raw", info.file_size, raw_crc, md5, sha1))
                         stream.seek(0)
-                        header = detect_header(stream, info.file_size, info.filename)
+                        header = detect_header(stream, info.file_size, member)
                         if header:
                             skip, variant = header
-                            stream.seek(0)
-                            candidates.append(_candidate(path, info.filename, stream, variant, skip=skip))
-        except (OSError, zipfile.BadZipFile, RuntimeError, NotImplementedError):
+                            size, crc, md5, sha1 = _hash_stream(stream, skip)
+                            candidates.append(HashCandidate(str(path), member, variant, size, crc, md5, sha1))
+        except (OSError, zipfile.BadZipFile, RuntimeError, NotImplementedError, EOFError):
             return []
         return candidates
 
     try:
         with path.open("rb") as stream:
-            size = os.fstat(stream.fileno()).st_size
-            header = detect_header(stream, size, path.name)
-            stream.seek(0)
-            raw = _candidate(path, "", stream, "raw", known_size=size)
-            candidates.append(raw)
-            if header:
-                skip, variant = header
+            size_on_disk = os.fstat(stream.fileno()).st_size
+            size, crc, md5, sha1 = _hash_stream(stream)
+            candidates.append(HashCandidate(str(path), "", "raw", size_on_disk, crc, md5, sha1))
+            if include_secondary:
                 stream.seek(0)
-                candidates.append(_candidate(path, "", stream, variant, skip=skip))
+                header = detect_header(stream, size_on_disk, path.name)
+                if header:
+                    skip, variant = header
+                    size, crc, md5, sha1 = _hash_stream(stream, skip)
+                    candidates.append(HashCandidate(str(path), "", variant, size, crc, md5, sha1))
     except OSError:
         return []
     return candidates
@@ -119,12 +112,15 @@ def hash_file(path: Path) -> list[HashCandidate]:
 def iter_rom_paths(root: Path) -> Iterator[Path]:
     """Walk a ROM directory, skipping DAT databases and common sidecar files."""
     root = Path(root)
+    supported_extensions = {
+        ".zip", ".nes", ".fds", ".unf", ".unif", ".sfc", ".smc", ".gb", ".gbc",
+        ".gba", ".nds", ".n64", ".z64", ".v64", ".gen", ".md", ".sms", ".gg",
+        ".pce", ".iso", ".chd", ".bin", ".pbp", ".cso", ".lnx", ".a78", ".a26",
+        ".rvz", ".wbfs", ".wud", ".gcm", ".rom", ".7z", ".rar",
+    }
     for directory, dirnames, filenames in os.walk(root):
-        # Do not recurse into common metadata/cache directories.
         dirnames[:] = [name for name in dirnames if name.lower() not in {".git", "__pycache__", "images"}]
         for filename in filenames:
             path = Path(directory) / filename
-            if path.suffix.lower() in IGNORED_EXTENSIONS:
-                continue
-            if path.suffix.lower() in {".zip", ".nes", ".fds", ".unf", ".unif", ".sfc", ".smc", ".gb", ".gbc", ".gba", ".nds", ".n64", ".z64", ".v64", ".gen", ".md", ".sms", ".gg", ".pce", ".iso", ".chd", ".cue", ".bin", ".pbp", ".cso", ".lnx", ".a78", ".a26", ".rvz", ".wbfs", ".wud", ".gcm", ".rom", ".7z", ".rar"}:
+            if path.suffix.lower() in supported_extensions:
                 yield path
