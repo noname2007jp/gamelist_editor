@@ -12,7 +12,7 @@ Windows向け `gamelist.xml` 編集ツールです。Python標準のTkinterで�
 - 日本語名辞書CSVによる候補照合と、画面上での手動修正
 - 保存時に既存 `gamelist.xml.bak` を作成
 - 日本語名の確定値を `<zh_CN>`, `<en_US>`, `<zh_TW>`, `<ko_KR>`, `<name>` に反映
-- **Phase 1追加:** ROMのハッシュ抽出とNo-Intro/Redump形式DATのオフライン照合を行うCLI
+- **Phase 1追加:** ROMのハッシュ抽出と、オンライン取得したDATのローカル照合を行うCLI
 
 ## 使い方
 
@@ -26,7 +26,7 @@ Windows向け `gamelist.xml` 編集ツールです。Python標準のTkinterで�
 
 ## ROMハッシュ・DAT照合（Phase 1）
 
-この機能は既存のGUIとは別のCLIとして追加しています。ROMのファイル名変更や移動は行いません。DAT照合結果は必ずCSVへ出力します。
+この機能は既存のGUIとは別のCLIです。初回実行時にオンラインから機種別DATを自動取得し、SQLiteデータベースを作成します。ROMのファイル名変更や移動は行わず、照合結果をCSVへ出力します。取得したDATは `.romtitler/dats/` にキャッシュし、7日ごとに更新確認します。通信に失敗した場合は既存のDATキャッシュを残します。
 
 ### 使い方
 
@@ -36,10 +36,16 @@ Python 3.11以降でリポジトリのルートから実行します。
 # DATを格納するフォルダを準備（No-Intro / RedumpのLogiqx XML形式）
 # 例: D:\ROM-DAT\ に機種ごとの .dat / .xml ファイルを配置
 
-python -m romtitler scan "D:\ROMs" --dat-dir "D:\ROM-DAT" --output "D:\results\romtitler_results.csv" --db "D:\results\romtitler.sqlite3"
+python -m romtitler scan "D:\ROMs" --output "D:\results\romtitler_results.csv"
+
+# DATだけを先に取得・更新する
+python -m romtitler update-dat
+
+# 取得対象を絞る例
+python -m romtitler update-dat --systems nes snes megadrive
 ```
 
-DATを追加・更新した場合は `--rebuild-db` を付けてSQLiteインデックスを作り直してください。
+DATは通常7日ごとに更新確認し、更新された場合はSQLiteインデックスを自動で再作成します。手動で強制更新する場合は `scan --update-dat`、オフラインで既存DBを使う場合は `scan --offline` を指定します。DATをローカルで手動追加・変更した場合は `--rebuild-db` を付けてください。
 
 ```powershell
 python -m romtitler scan "D:\ROMs" --dat-dir "D:\ROM-DAT" --output ".\romtitler_results.csv" --db ".\romtitler.sqlite3" --rebuild-db
@@ -50,7 +56,8 @@ python -m romtitler scan "D:\ROMs" --dat-dir "D:\ROM-DAT" --output ".\romtitler_
 - ZIPは展開せず、セントラルディレクトリのCRC32とサイズを利用します。ZIP内に複数のファイルがあれば各エントリを候補として扱います。
 - ZIP内エントリと通常ファイルのハッシュはストリーミング処理し、ファイル全体をメモリに読み込みません。
 - iNESヘッダー、SNESコピーヘッダー、および拡張子が `.lnx` / `.a78` のAtariヘッダーについて、ヘッダーあり・除去後の候補を作ります。
-- Logiqx XML DATの `game` / `machine` と `rom` 属性をSQLiteに取り込み、CRC32＋サイズ、MD5、SHA1で照合します。
+- Logiqx XMLおよびclrmamepro形式DATをSQLiteに取り込み、CRC32＋サイズ、MD5、SHA1で照合します。
+- オンラインDATは公開されている `libretro/libretro-database` のNo-Introデータを利用します。標準セットはNES、FDS、SNES、GB/GBC/GBA、N64、Mega Drive、Master System、Game Gear、PC Engine、WonderSwan、Atari 2600/Lynx、Neo Geo Pocket系です。機種によっては公開DATが見つからず取得に失敗する場合があります。
 - CSV列: `file_path, system, crc32, md5, sha1, matched_title, title_ja, source, confidence, status, hash_variant, note`。`title_ja` はPhase 1では自動翻訳しないため空欄です。
 - `.cue` / `.m3u` はサイドカーとしてスキップし、CHDは内部データのハッシュ変換に専用ライブラリが必要なため `unsupported` として出力します。7z/RARの内部エントリ走査、Wii/GCのGameTDB照合、MAME listxml照合は後続フェーズです。
 - DAT一致時の `matched_title` はDATの名称を保持します（例: `Example Game (Japan)`）。同一ハッシュに異なるタイトルが複数ある場合は `note` に警告を記録します。
@@ -87,7 +94,7 @@ Python 3.10以降をインストールしたWindowsで、リポジトリ内の `
 ## 注意点 / 今後の拡張
 
 - 現在のGUIでの日本語名自動取得はローカルCSV辞書までです。ScreenScraper APIやファジーマッチは未実装です。
-- DATファイルはユーザーが用意してください。DAT配布元の利用条件を確認し、DATそのものをこのリポジトリにコミットしないでください。
+- オンラインDATの自動取得にはインターネット接続が必要です。取得データは実行PCの `.romtitler/dats/` に保存し、DATそのものはこのリポジトリにコミットしません。配布元の更新や公開状況により、取得できる機種・データの範囲は変わります。
 - `gamelist.xml` は保存時にXMLとして再整形されます。独自タグの値は保持する設計ですが、コメントや空白などの書式は保持されない場合があります。
 - 既存ゲームがない新規 `gamelist.xml` では、機種固有の必須項目を自動生成できないため、基本的な `<game>` 項目のみ作成します。
 - ゲームIDや独自項目の採番・必須値は、実機側の仕様に応じた確認が必要です。
