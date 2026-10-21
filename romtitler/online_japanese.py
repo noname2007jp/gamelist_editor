@@ -115,6 +115,10 @@ def lookup_japanese_title(
         base_name = Path(filename).stem
         by_filename = index.get("by_filename", {})
         values = by_filename.get(base_name, []) if isinstance(by_filename, dict) else []
+        if not values and isinstance(by_filename, dict):
+            # ROM filenames often differ only in capitalization between OSes.
+            folded = base_name.casefold()
+            values = next((items for key, items in by_filename.items() if str(key).casefold() == folded), [])
         if isinstance(values, list):
             entries = [(item, "filename_exact") for item in values if isinstance(item, dict)]
         if entries:
