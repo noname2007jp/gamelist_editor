@@ -16,6 +16,7 @@ from cjk_language_chars import SIMPLIFIED_CHARS, TRADITIONAL_CHARS
 from romtitler.dat_parser import build_database, find_match
 from romtitler.hashing import hash_file
 from romtitler.online_dat import DEFAULT_SYSTEMS, download_dat_files
+from romtitler.online_japanese import lookup_japanese_title
 
 APP_TITLE = "gamelist_editor"
 NAME_TAGS = ("zh_CN", "en_US", "zh_TW", "ko_KR", "name")
@@ -402,7 +403,7 @@ class GameListEditor:
         self.status_var.set("オンラインDATを取得・更新しています。完了までお待ちください…")
 
         def worker():
-            result = {"titles": {}, "warnings": [], "error": ""}
+            result = {"titles": {}, "japanese": {}, "warnings": [], "error": ""}
             try:
                 changed, warnings = download_dat_files(dat_dir, list(DEFAULT_SYSTEMS))
                 result["warnings"] = warnings
@@ -421,6 +422,7 @@ class GameListEditor:
                                 matches = find_match(connection, candidate.crc32, candidate.size, candidate.md5, candidate.sha1)
                                 if matches:
                                     break
+                        secondary = []
                         if not matches:
                             secondary = hash_file(rom_path, include_secondary=True)
                             for candidate in secondary:
@@ -430,7 +432,15 @@ class GameListEditor:
                         if matches:
                             names = list(dict.fromkeys(str(row["name"]) for row in matches))
                             result["titles"][normalized_xml_path(xml_path)] = " / ".join(names[:3])
-                        self.root.after(0, lambda i=index, t=total: self.status_var.set(f"オンラインDAT照合中：{i}/{t}"))
+
+                        # Japanese native-script title lookup: exact ROM hash first,
+                        # then exact filename as a lower-confidence fallback.
+                        hash_candidates = secondary or primary
+                        crcs = list(dict.fromkeys(c.crc32 for c in hash_candidates if getattr(c, "crc32", "")))
+                        jp_result = lookup_japanese_title(folder.name, rom_path.name, crcs, cache_root)
+                        if jp_result:
+                            result["japanese"][normalized_xml_path(xml_path)] = jp_result
+                        self.root.after(0, lambda i=index, t=total: self.status_var.set(f"オンラインROM・日本語タイトル照合中：{i}/{t}"))
                 finally:
                     connection.close()
             except Exception as exc:
@@ -447,22 +457,34 @@ class GameListEditor:
             self.status_var.set("オンラインROM照合に失敗しました。")
             return
         self.online_titles.update(result.get("titles", {}))
+        japanese_results = result.get("japanese", {})
         assert self.tree is not None
-        matched = 0
+        dat_matched = 0
+        japanese_matched = 0
         for iid in self.tree.get_children():
             xml_path = self.tree_to_path.get(iid, "")
-            title = self.online_titles.get(normalized_xml_path(xml_path), "")
-            self.tree.set(iid, "online", title)
-            if title:
-                matched += 1
+            key = normalized_xml_path(xml_path)
+            dat_title = self.online_titles.get(key, "")
+            self.tree.set(iid, "online", dat_title)
+            jp = japanese_results.get(key)
+            if jp and jp.get("title"):
+                japanese_matched += 1
+                # Do not overwrite an existing dictionary/user choice.
+                if not self.tree_to_title.get(iid):
+                    self.tree_to_title[iid] = jp["title"]
+                    self.tree.set(iid, "candidate", jp["title"])
+                    self.tree_to_status[iid] = "日本語タイトル取得"
+                    self.tree.set(iid, "status", self.tree_to_status[iid])
+            elif dat_title:
+                dat_matched += 1
                 if not self.tree_to_title.get(iid):
                     self.tree_to_status[iid] = "DAT一致・日本語未確認"
                     self.tree.set(iid, "status", self.tree_to_status[iid])
         warning_count = len(result.get("warnings", []))
-        detail = f"オンラインDAT照合完了：{matched}/{total} 件一致。"
-        detail += " DAT名は日本語タイトルとは限らないため、日本語名欄には自動転記していません。"
+        detail = f"オンライン照合完了：日本語タイトル {japanese_matched}/{total} 件、DAT名のみ一致 {dat_matched} 件。"
+        detail += " 日本語名は候補欄に設定しました。確認後に「日本語名を保存」を押してください。"
         if warning_count:
-            detail += f" DAT取得警告 {warning_count} 件（キャッシュ利用の場合があります）。"
+            detail += f" DAT取得警告 {warning_count} 件（キャッシュを使用した可能性があります）。"
         if result.get("database"):
             detail += " " + result["database"] + "。"
         self.status_var.set(detail)
