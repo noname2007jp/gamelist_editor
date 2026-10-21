@@ -48,7 +48,7 @@ def _clrmamepro_fields(text: str) -> dict[str, str]:
 
 
 def _import_clrmamepro(connection: sqlite3.Connection, text: str, dat_path: Path) -> int:
-    header_match = re.search(r'(?is)^\s*clrmamepro\s*\((.*?)^\s*\)', text)
+    header_match = re.search(r'(?ims)^\s*clrmamepro\s*\((.*?)^\s*\)', text)
     header = _clrmamepro_fields(header_match.group(1)) if header_match else {}
     system = header.get("name") or header.get("description") or dat_path.stem
     rows: list[tuple] = []
