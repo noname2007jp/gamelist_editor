@@ -45,13 +45,16 @@ jobs:
         run: |
           python -m pip install --upgrade pip
           python -m pip install -r requirements.txt
-      - name: Build executable
+      - name: Build GUI executable
         run: python -m PyInstaller --noconfirm --clean --onefile --windowed --name gamelist_editor main.py
+      - name: Build ROM scanner CLI executable
+        run: python -m PyInstaller --noconfirm --clean --onefile --name romtitler romtitler_cli.py
       - name: Upload executable
         uses: actions/upload-artifact@v4
         with:
           name: gamelist_editor-windows
           path: |
             dist/gamelist_editor.exe
+            dist/romtitler.exe
             titles_ja.csv
           if-no-files-found: error
