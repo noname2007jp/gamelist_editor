@@ -23,7 +23,8 @@ PLATFORM_ALIASES = {
     "pce": "pce", "pcengine": "pce", "turbografx16": "pce",
     "ws": "ws", "wonderswan": "ws",
     "wsc": "wsc", "wonderswancolor": "wsc",
-    "arcade": "arcade", "cps3": "cps3", "neogeo": "neogeo",
+    "arcade": "arcade", "cps1": "arcade", "cps2": "arcade", "cps3": "cps3", "neogeo": "neogeo",
+    "atari2600": "atari2600", "atarilynx": "atarilynx", "gamegear": "gamegear", "ngpc": "ngpc", "ngp": "ngp", "wonder": "ws", "sms": "sms",
     "saturn": "saturn", "n64": "n64", "nintendo64": "n64",
     "nds": "nds", "ds": "nds",
     "psx": "ps1", "ps1": "ps1", "playstation": "ps1",
@@ -97,9 +98,11 @@ def lookup_japanese_title(
     index_path = Path(cache_dir) / "retronian" / f"rom-index-{platform}.json"
     try:
         index = _cached_json(f"{BASE_URL}/rom-index/{safe_platform}.json", index_path)
-    except (OSError, urllib.error.URLError, TimeoutError, json.JSONDecodeError, ValueError):
+    except (OSError, urllib.error.URLError, TimeoutError, json.JSONDecodeError, ValueError) as exc:
+        print(f"[日本語タイトルAPI] {platform} ROM index取得失敗: {exc}")
         return None
     if not isinstance(index, dict):
+        print(f"[日本語タイトルAPI] {platform} ROM indexの形式が不正です")
         return None
 
     entries: list[tuple[dict, str]] = []
