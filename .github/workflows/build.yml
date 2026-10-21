@@ -30,5 +30,7 @@ jobs:
         uses: actions/upload-artifact@v4
         with:
           name: gamelist_editor-windows
-          path: dist/gamelist_editor.exe
+          path: |
+            dist/gamelist_editor.exe
+            titles_ja.csv
           if-no-files-found: error
