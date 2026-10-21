@@ -81,7 +81,7 @@ def _title_for_game(game: object) -> str:
 
 def _normalize_name(value: str) -> str:
     value = Path(str(value)).stem.casefold()
-    value = re.sub(r"\\([^)]*\\)|\\[[^]]*\\]", " ", value)
+    value = re.sub(r"\([^)]*\)|\[[^]]*\]", " ", value)
     return re.sub(r"[^a-z0-9ぁ-ゖァ-ヺ一-龯㐀-䶿]", "", value)
 
 
