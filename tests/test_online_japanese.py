@@ -21,3 +21,10 @@ def test_prefers_verified_japanese_title():
 
 def test_no_japanese_title_returns_empty():
     assert _title_for_game({"titles": [{"text": "Super Mario World", "lang": "en"}]}) == ""
+
+
+def test_normalize_filename_removes_region_tags():
+    from romtitler.online_japanese import _normalize_name
+
+    assert _normalize_name("Hoshi no Kirby (Japan).zip") == "hoshinokirby"
+    assert _normalize_name("Super Mario World [USA].sfc") == "supermarioworld"
