@@ -13,6 +13,29 @@ from .models import ScanResult, display_path
 CSV_FIELDS = ["file_path", "system", "crc32", "md5", "sha1", "matched_title", "title_ja", "source", "confidence", "status", "hash_variant", "note"]
 
 
+def _matching_rows(connection: sqlite3.Connection, candidate):
+    return find_match(connection, candidate.crc32, candidate.size, candidate.md5, candidate.sha1)
+
+
+def _result_for_candidate(path: Path, candidate, matches, default_system: str) -> ScanResult:
+    if matches:
+        unique = {(str(row["system"]), str(row["name"])) for row in matches}
+        row = matches[0]
+        note = "同一ハッシュのDAT候補が複数あります。タイトルを確認してください。" if len(unique) > 1 else ""
+        return ScanResult(
+            display_path(path, candidate.archive_member),
+            default_system or str(row["system"]),
+            candidate.crc32, candidate.md5, candidate.sha1,
+            str(row["name"]), "", "dat", 1.0, "matched", candidate.variant, note,
+        )
+    return ScanResult(
+        display_path(path, candidate.archive_member), default_system,
+        candidate.crc32, candidate.md5, candidate.sha1,
+        status="not_found", hash_variant=candidate.variant,
+        note="DATに一致しませんでした",
+    )
+
+
 def scan(args: argparse.Namespace) -> int:
     db_path = Path(args.db).resolve()
     if args.rebuild_db or not db_path.exists():
@@ -22,6 +45,7 @@ def scan(args: argparse.Namespace) -> int:
     connection.row_factory = sqlite3.Row
     root = Path(args.rom_dir).resolve()
     if not root.is_dir():
+        connection.close()
         raise FileNotFoundError(f"ROMフォルダがありません: {root}")
     paths = list(iter_rom_paths(root))
     total = len(paths)
@@ -30,40 +54,33 @@ def scan(args: argparse.Namespace) -> int:
     results: list[ScanResult] = []
     try:
         for index, path in enumerate(paths, 1):
-            candidates = hash_file(path)
-            if not candidates:
+            primary = hash_file(path, include_secondary=False)
+            if not primary:
                 results.append(ScanResult(str(path), args.system or "", "", "", "", status="unsupported", note="未対応形式、破損、または読み取り不可"))
             else:
-                matched_result = None
-                best_candidate = candidates[0]
-                all_matches = []
-                for candidate in candidates:
-                    matches = find_match(connection, candidate.crc32, candidate.size, candidate.md5, candidate.sha1)
-                    if matches:
-                        matched_result = (candidate, matches)
-                        break
-                if matched_result:
-                    best_candidate, matches = matched_result
-                    # When duplicate hashes exist, preserve the first DAT title but flag ambiguity.
-                    unique = {(str(row["system"]), str(row["name"])) for row in matches}
-                    row = matches[0]
-                    system = args.system or str(row["system"])
-                    note = ""
-                    if len(unique) > 1:
-                        note = "同一ハッシュのDAT候補が複数あります。タイトルを確認してください。"
-                    results.append(ScanResult(
-                        display_path(path, best_candidate.archive_member), system,
-                        best_candidate.crc32, best_candidate.md5, best_candidate.sha1,
-                        str(row["name"]), "", "dat", 1.0, "matched", best_candidate.variant, note,
-                    ))
+                # Avoid decompressing ZIP members for MD5/SHA1 unless CRC+size
+                # did not resolve every member in the first pass.
+                primary_matches = [_matching_rows(connection, item) for item in primary]
+                if all(primary_matches):
+                    for candidate, matches in zip(primary, primary_matches):
+                        results.append(_result_for_candidate(path, candidate, matches, args.system or ""))
                 else:
-                    candidate = candidates[0]
-                    results.append(ScanResult(
-                        display_path(path, candidate.archive_member), args.system or "",
-                        candidate.crc32, candidate.md5, candidate.sha1,
-                        status="not_found", hash_variant=candidate.variant,
-                        note="DATに一致しませんでした",
-                    ))
+                    secondary = hash_file(path, include_secondary=True)
+                    by_member: dict[str, list] = {}
+                    for candidate in secondary:
+                        by_member.setdefault(candidate.archive_member, []).append(candidate)
+                    for member, candidates in by_member.items():
+                        selected = None
+                        selected_matches = []
+                        for candidate in candidates:
+                            matches = _matching_rows(connection, candidate)
+                            if matches:
+                                selected = candidate
+                                selected_matches = matches
+                                break
+                        if selected is None:
+                            selected = next((item for item in candidates if item.variant == "raw"), candidates[0])
+                        results.append(_result_for_candidate(path, selected, selected_matches, args.system or ""))
             if index % 25 == 0 or index == total:
                 print(f"走査中: {index}/{total}", end="\r", flush=True)
     except KeyboardInterrupt:
