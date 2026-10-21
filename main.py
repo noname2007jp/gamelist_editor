@@ -384,7 +384,7 @@ class GameListEditor:
             xml_path = self.tree_to_path.get(iid, "")
             if not xml_path:
                 continue
-            relative = xml_path.replace("\\\\", "/").removeprefix("./")
+            relative = xml_path.replace("\\", "/").removeprefix("./")
             rom_path = (folder / relative).resolve()
             if rom_path.is_file():
                 jobs.append((iid, xml_path, rom_path))
