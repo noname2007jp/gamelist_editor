@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import re
 import sqlite3
 import xml.etree.ElementTree as ET
 from pathlib import Path
@@ -25,7 +26,8 @@ CREATE INDEX IF NOT EXISTS idx_games_system ON games(system);
 
 
 def _attr(element: ET.Element, key: str) -> str:
-    return (element.attrib.get(key) or "").strip().lower() if key in {"crc", "md5", "sha1"} else (element.attrib.get(key) or "").strip()
+    value = (element.attrib.get(key) or "").strip()
+    return value.lower() if key in {"crc", "md5", "sha1"} else value
 
 
 def _system_name(root: ET.Element, dat_path: Path) -> str:
@@ -38,34 +40,33 @@ def _system_name(root: ET.Element, dat_path: Path) -> str:
     return dat_path.stem
 
 
-def import_dat_file(connection: sqlite3.Connection, dat_path: Path) -> int:
-    """Import a Logiqx XML DAT file, supporting both game/rom and machine/rom."""
-    try:
-        root = ET.parse(dat_path).getroot()
-    except (ET.ParseError, OSError) as exc:
-        raise ValueError(f"DATを読み込めません: {dat_path}: {exc}") from exc
-    system = _system_name(root, dat_path)
+def _clrmamepro_fields(text: str) -> dict[str, str]:
+    fields: dict[str, str] = {}
+    for match in re.finditer(r'([A-Za-z_][A-Za-z0-9_]*)\s+(?:"([^"]*)"|([^\s)]+))', text):
+        fields[match.group(1).lower()] = (match.group(2) if match.group(2) is not None else match.group(3)).strip()
+    return fields
+
+
+def _import_clrmamepro(connection: sqlite3.Connection, text: str, dat_path: Path) -> int:
+    header_match = re.search(r'(?is)^\s*clrmamepro\s*\((.*?)^\s*\)', text)
+    header = _clrmamepro_fields(header_match.group(1)) if header_match else {}
+    system = header.get("name") or header.get("description") or dat_path.stem
     rows: list[tuple] = []
-    for game in root.iter():
-        if game.tag not in {"game", "machine"}:
-            continue
-        game_name = _attr(game, "name")
-        if not game_name:
-            continue
-        serial = _attr(game, "serial")
-        for rom in game.findall("rom"):
-            size_text = _attr(rom, "size")
-            try:
-                size = int(size_text) if size_text else 0
-            except ValueError:
-                size = 0
-            crc = _attr(rom, "crc")
-            md5 = _attr(rom, "md5")
-            sha1 = _attr(rom, "sha1")
+    for game_match in re.finditer(r'(?ms)^\s*game\s*\(\s*name\s+"([^"]*)"(.*?)^\s*\)', text):
+        game_name = game_match.group(1).strip()
+        body = game_match.group(2)
+        serial = _clrmamepro_fields(body).get("serial", "")
+        for rom_match in re.finditer(r'(?is)\brom\s*\(([^)]*)\)', body):
+            fields = _clrmamepro_fields(rom_match.group(1))
+            crc, md5, sha1 = (fields.get(key, "").lower() for key in ("crc", "md5", "sha1"))
             if not (crc or md5 or sha1):
                 continue
+            try:
+                size = int(fields.get("size", "0"))
+            except ValueError:
+                size = 0
             rows.append((crc, md5, sha1, size, system, game_name,
-                         _attr(rom, "name"), serial, dat_path.name))
+                         fields.get("name", ""), serial, dat_path.name))
     connection.executemany(
         "INSERT INTO games(crc,md5,sha1,size,system,name,rom_name,serial,dat_file) VALUES(?,?,?,?,?,?,?,?,?)",
         rows,
@@ -73,8 +74,51 @@ def import_dat_file(connection: sqlite3.Connection, dat_path: Path) -> int:
     return len(rows)
 
 
+def import_dat_file(connection: sqlite3.Connection, dat_path: Path) -> int:
+    """Import Logiqx XML or clrmamepro text DAT files."""
+    try:
+        text = dat_path.read_text(encoding="utf-8-sig", errors="replace")
+    except OSError as exc:
+        raise ValueError(f"DATを読み込めません: {dat_path}: {exc}") from exc
+    if not text.strip():
+        raise ValueError(f"DATが空です: {dat_path}")
+    if re.match(r"\s*<", text):
+        try:
+            root = ET.fromstring(text)
+        except ET.ParseError as exc:
+            raise ValueError(f"DATを読み込めません: {dat_path}: {exc}") from exc
+        system = _system_name(root, dat_path)
+        rows: list[tuple] = []
+        for game in root.iter():
+            if game.tag not in {"game", "machine"}:
+                continue
+            game_name = _attr(game, "name")
+            if not game_name:
+                continue
+            serial = _attr(game, "serial")
+            for rom in game.findall("rom"):
+                try:
+                    size = int(_attr(rom, "size") or "0")
+                except ValueError:
+                    size = 0
+                crc, md5, sha1 = (_attr(rom, key) for key in ("crc", "md5", "sha1"))
+                if crc or md5 or sha1:
+                    rows.append((crc, md5, sha1, size, system, game_name,
+                                 _attr(rom, "name"), serial, dat_path.name))
+        connection.executemany(
+            "INSERT INTO games(crc,md5,sha1,size,system,name,rom_name,serial,dat_file) VALUES(?,?,?,?,?,?,?,?,?)",
+            rows,
+        )
+        return len(rows)
+    if re.search(r"(?im)^\s*clrmamepro\s*\(", text):
+        count = _import_clrmamepro(connection, text, dat_path)
+        if count:
+            return count
+    raise ValueError(f"未対応または不正なDAT形式です: {dat_path}")
+
+
 def build_database(dat_dir: Path, db_path: Path) -> tuple[int, int]:
-    """Rebuild a SQLite DAT index from all *.dat and *.xml files in a directory."""
+    """Rebuild a SQLite index from all *.dat and *.xml files in a directory."""
     dat_dir = Path(dat_dir)
     if not dat_dir.is_dir():
         raise FileNotFoundError(f"DATフォルダがありません: {dat_dir}")
@@ -84,9 +128,11 @@ def build_database(dat_dir: Path, db_path: Path) -> tuple[int, int]:
     try:
         connection.execute("DROP TABLE IF EXISTS games")
         connection.executescript(SCHEMA)
-        dat_files = sorted({*dat_dir.rglob("*.dat"), *dat_dir.rglob("*.DAT"), *dat_dir.rglob("*.xml"), *dat_dir.rglob("*.XML")})
-        total = 0
-        imported = 0
+        dat_files = sorted({
+            *dat_dir.rglob("*.dat"), *dat_dir.rglob("*.DAT"),
+            *dat_dir.rglob("*.xml"), *dat_dir.rglob("*.XML")
+        })
+        total = imported = 0
         for dat_path in dat_files:
             try:
                 total += import_dat_file(connection, dat_path)
@@ -113,5 +159,5 @@ def find_match(connection: sqlite3.Connection, crc: str, size: int, md5: str = "
     for sql, args in queries:
         rows = connection.execute(sql, args).fetchall()
         if rows:
-            return [dict(zip(("system","name","rom_name","size","crc","md5","sha1","serial"), row)) for row in rows]
+            return [dict(zip(("system", "name", "rom_name", "size", "crc", "md5", "sha1", "serial"), row)) for row in rows]
     return []
