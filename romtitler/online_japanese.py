@@ -79,6 +79,58 @@ def _title_for_game(game: object) -> str:
     return str(candidates[0]["text"]).strip()
 
 
+def _normalize_name(value: str) -> str:
+    value = Path(str(value)).stem.casefold()
+    value = re.sub(r"\\([^)]*\\)|\\[[^]]*\\]", " ", value)
+    return re.sub(r"[^a-z0-9ぁ-ゖァ-ヺ一-龯㐀-䶿]", "", value)
+
+
+def _lookup_in_platform_games(platform: str, filename: str, crc32_values: list[str] | None, cache_dir: Path) -> dict[str, str] | None:
+    """Fallback to the full platform JSON when the ROM index misses."""
+    safe_platform = urllib.parse.quote(platform, safe="")
+    cache_path = Path(cache_dir) / "retronian" / f"platform-{platform}.json"
+    try:
+        games = _cached_json(f"{BASE_URL}/{safe_platform}.json", cache_path)
+    except (OSError, urllib.error.URLError, TimeoutError, json.JSONDecodeError, ValueError) as exc:
+        print(f"[日本語タイトルAPI] {platform} 全件データ取得失敗: {exc}")
+        return None
+    if not isinstance(games, list):
+        return None
+    crcs = {str(c).strip().lower().removeprefix("0x") for c in (crc32_values or []) if str(c).strip()}
+    wanted = _normalize_name(filename)
+    candidates = []
+    for game in games:
+        if not isinstance(game, dict):
+            continue
+        roms = game.get("roms", [])
+        if not isinstance(roms, list):
+            continue
+        if any(isinstance(rom, dict) and str(rom.get("crc32", "")).lower() in crcs for rom in roms):
+            candidates.append((game, "hash_exact"))
+    if not candidates and wanted:
+        for game in games:
+            if not isinstance(game, dict):
+                continue
+            roms = game.get("roms", [])
+            if isinstance(roms, list) and any(
+                isinstance(rom, dict) and _normalize_name(str(rom.get("name", ""))) == wanted
+                for rom in roms
+            ):
+                candidates.append((game, "filename_exact"))
+    for game, match_type in candidates:
+        title = _title_for_game(game)
+        if title:
+            return {
+                "title": title,
+                "confidence": "高（ハッシュ一致）" if match_type == "hash_exact" else "中（ファイル名一致）",
+                "match_type": match_type,
+                "platform": platform,
+                "game_id": str(game.get("id", "")),
+                "source": "Retronian GameDB",
+            }
+    return None
+
+
 def lookup_japanese_title(
     system_folder: str,
     filename: str,
@@ -103,7 +155,7 @@ def lookup_japanese_title(
         return None
     if not isinstance(index, dict):
         print(f"[日本語タイトルAPI] {platform} ROM indexの形式が不正です")
-        return None
+        return _lookup_in_platform_games(platform, filename, crc32_values, cache_dir)
 
     entries: list[tuple[dict, str]] = []
     for crc in crc32_values or []:
@@ -126,6 +178,9 @@ def lookup_japanese_title(
             entries = [(item, "filename_exact") for item in values if isinstance(item, dict)]
         if entries:
             match_type = "filename_exact"
+
+    if not entries:
+        return _lookup_in_platform_games(platform, filename, crc32_values, cache_dir)
 
     # Only unique game IDs are fetched. The first exact hash match has priority.
     seen: set[str] = set()
@@ -150,4 +205,4 @@ def lookup_japanese_title(
                 "game_id": game_id,
                 "source": "Retronian GameDB",
             }
-    return None
+    return _lookup_in_platform_games(platform, filename, crc32_values, cache_dir)
