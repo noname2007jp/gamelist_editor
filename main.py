@@ -528,7 +528,7 @@ class GameListEditor:
         changes = []
         for iid in self.tree.get_children():
             title = self.tree_to_title.get(iid, "").strip()
-            if title and self.tree_to_status.get(iid) in ("辞書一致", "手動設定"):
+            if title and self.tree_to_status.get(iid) in ("辞書一致", "手動設定", "日本語タイトル取得"):
                 game = self.tree_to_game[iid]
                 old = [text_of(game, tag) for tag in NAME_TAGS]
                 if any(value != title for value in old):
