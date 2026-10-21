@@ -26,7 +26,7 @@ def detect_header(stream: BinaryIO, size: int, filename: str) -> tuple[int, str]
     """Return a likely copier/header length without assuming every ROM has one."""
     ext = Path(filename).suffix.lower()
     prefix = _read_prefix(stream, 16)
-    if prefix.startswith(b"NES\\x1a") and size >= 16:
+    if prefix.startswith(b"NES\x1a") and size >= 16:
         return 16, "ines_header_removed"
     if ext in {".smc", ".sfc"} and size % 1024 == 512 and size > 512:
         return 512, "snes_copier_header_removed"
