@@ -203,7 +203,9 @@ class _SearchFormParser(HTMLParser):
 
 def _search_catalogue_page(platform: str, filename: str, cache_dir: Path, log_path: Path | None = None) -> str | None:
     """Submit the ROM-derived words to emu-russia's own keyword search form."""
-    catalogue = _fetch_page(platform, cache_dir, log_path)
+    # Preserve compatibility with tests and callers that replace _fetch_page
+    # with the original two-argument callable when diagnostics are disabled.
+    catalogue = _fetch_page(platform, cache_dir) if log_path is None else _fetch_page(platform, cache_dir, log_path)
     if not catalogue:
         return None
 
