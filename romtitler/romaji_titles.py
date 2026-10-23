@@ -22,10 +22,10 @@ def _normalize(value: str) -> str:
 
 def _tokens(filename: str) -> list[str]:
     stem = Path(filename).stem
-    # Parenthesized/bracketed region tags such as (Japan) and [!]
-    # are metadata rather than part of the title.
-    stem = re.sub(r"\([^)]*\)|\[[^]]*\]", " ", stem)
-    return [_normalize(part) for part in stem.split() if _normalize(part)]
+    # Square-bracketed tags such as [!] and [USA] are metadata.
+    stem = re.sub(r"\[[^]]*\]", " ", stem)
+    # Split on spaces and the filename separators: . - _ ( )
+    return [_normalize(part) for part in re.split(r"[.\-_\s()]+", stem) if _normalize(part)]
 
 
 def _find_tsv(system_folder: str, app_dir: Path) -> Path | None:
@@ -61,10 +61,11 @@ def load_romaji_titles(tsv_path: Path) -> list[dict[str, str]]:
 
 
 def lookup_romaji_title(system_folder: str, filename: str, app_dir: Path) -> dict[str, str] | None:
-    """Match filename space-separated tokens against the system's romaji TSV.
+    """Match filename tokens against the system's romaji TSV.
 
     TSV files are discovered automatically using the naming pattern
-    <system>-title-romaji.tsv. Ranking: most matching filename tokens, then
+    <system>-title-romaji.tsv. Filename tokens are split on spaces and
+    the characters . - _ ( ). Ranking: most matching filename tokens, then
     fewest unmatched filename characters, then most matched characters.
     Exact ties retain TSV order.
     """
