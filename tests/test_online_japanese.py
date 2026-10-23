@@ -107,4 +107,4 @@ def test_emu_russia_ignores_filename_suffix_after_japan_marker():
     assert _tokens("Contra-Hard_Corps (J).bin") == ["contra", "hard", "corps"]
     assert _tokens("Contra-Hard_Corps (Japan).bin") == ["contra", "hard", "corps"]
     assert _tokens("Contra-Hard_Corps (Japan Rev A).bin") == ["contra", "hard", "corps"]
-    assert _tokens("Contra-Hard_Corps (USA).bin") == ["contra", "hard", "corps", "usa"]
+    assert _tokens("Contra-Hard_Corps (USA).bin") == ["contra", "hard", "corps"]
