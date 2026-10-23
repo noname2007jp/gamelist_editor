@@ -97,6 +97,18 @@ def _parse_games(source: str) -> list[dict[str, str]]:
         match = TITLE_LINE.match(line)
         if match:
             label, value = match.groups()
+            # Some entries have no release-year/publisher metadata. Start a new
+            # game when the next North American title appears, otherwise several
+            # games collapse into one record and most titles become unmatchable.
+            if label == "北米版のタイトル" and any(
+                key in current for key in (
+                    "北米版のタイトル",
+                    "欧州版のタイトル",
+                    "国内版のタイトル(アルファベット表記)",
+                    "国内版のタイトル",
+                )
+            ):
+                flush()
             value = value.strip(" :：\t")
             if not value and i + 1 < len(lines):
                 i += 1
