@@ -412,9 +412,9 @@ class GameListEditor:
             try:
                 debug_log_path.parent.mkdir(parents=True, exist_ok=True)
                 with debug_log_path.open("w", encoding="utf-8") as log:
-                    log.write(f"emu-russia 詳細ログ開始: 対象ROM {len(jobs)} 件\\n")
+                    log.write(f"emu-russia 詳細ログ開始: 対象ROM {len(jobs)} 件\n")
             except OSError as exc:
-                messagebox.showwarning("ログ", f"ログファイルを作成できません。\\n{exc}")
+                messagebox.showwarning("ログ", f"ログファイルを作成できません。\n{exc}")
                 debug_log_path = None
         self.status_var.set("emu-russia の国内版タイトルを照合しています…")
 
