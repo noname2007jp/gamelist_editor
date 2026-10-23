@@ -66,7 +66,11 @@ def _normalize(value: str) -> str:
 
 
 def _tokens(value: str) -> list[str]:
-    value = re.sub(r"\([^)]*\)|\[[^]]*\]", " ", Path(value).stem)
+    # Japanese-region markers indicate the end of the useful ROM title.
+    # Ignore the marker and everything after it, including incomplete "(Japan..." tags.
+    stem = Path(value).stem
+    stem = re.split(r"\(\s*(?:j\)|japan\b)", stem, maxsplit=1, flags=re.IGNORECASE)[0]
+    value = re.sub(r"\([^)]*\)|\[[^]]*\]", " ", stem)
     return [token for token in (_normalize(part) for part in re.split(r"[.\-_\s()]+", value)) if token]
 
 
