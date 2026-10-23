@@ -78,37 +78,107 @@ def _tokens(value: str) -> list[str]:
     return [token for token in (_normalize(part) for part in re.split(r"[.\-_\s()]+", value)) if token]
 
 
+class _GameRowsParser(HTMLParser):
+    """Extract label/value pairs from the site's gdb_table rows."""
+
+    def __init__(self) -> None:
+        super().__init__(convert_charrefs=True)
+        self.rows: list[list[str]] = []
+        self.in_row = False
+        self.in_cell = False
+        self.cells: list[str] = []
+        self.cell_parts: list[str] = []
+
+    def handle_starttag(self, tag: str, attrs: list[tuple[str, str | None]]) -> None:
+        if tag == "tr":
+            self.in_row = True
+            self.cells = []
+        elif tag == "td" and self.in_row:
+            self.in_cell = True
+            self.cell_parts = []
+        elif tag == "br" and self.in_cell:
+            self.cell_parts.append(" ")
+
+    def handle_data(self, data: str) -> None:
+        if self.in_cell:
+            self.cell_parts.append(data)
+
+    def handle_endtag(self, tag: str) -> None:
+        if tag == "td" and self.in_cell:
+            self.cells.append(re.sub(r"\s+", " ", "".join(self.cell_parts)).strip())
+            self.in_cell = False
+        elif tag == "tr" and self.in_row:
+            if len(self.cells) >= 2:
+                self.rows.append(self.cells)
+            self.in_row = False
+
+
 def _parse_games(source: str) -> list[dict[str, str]]:
+    # The live catalogue uses a two-cell table: label in the first td and
+    # title/value in the second td. Parse that structure directly so tags such
+    # as <b> and <a> cannot split labels from their values.
+    row_parser = _GameRowsParser()
+    row_parser.feed(source)
+    if row_parser.rows:
+        games: list[dict[str, str]] = []
+        current: dict[str, list[str]] = {}
+
+        def flush_rows() -> None:
+            nonlocal current
+            if current:
+                game = {label: values[-1] for label, values in current.items() if values}
+                if any(label in game for label in (
+                    "北米版のタイトル", "欧州版のタイトル",
+                    "国内版のタイトル(アルファベット表記)", "国内版のタイトル",
+                )):
+                    games.append(game)
+                current = {}
+
+        for cells in row_parser.rows:
+            label, value = cells[0].strip(), cells[1].strip()
+            if label in TITLE_LABELS:
+                if label == "北米版のタイトル" and any(
+                    key in current for key in (
+                        "北米版のタイトル", "欧州版のタイトル",
+                        "国内版のタイトル(アルファベット表記)", "国内版のタイトル",
+                    )
+                ):
+                    flush_rows()
+                if value:
+                    current.setdefault(label, []).append(value)
+            elif META_LINE.match(label):
+                flush_rows()
+        flush_rows()
+        if games:
+            return games
+
+    # Fallback for simplified pages and fixtures where labels and values are
+    # rendered as ordinary text rather than table cells.
     text = _TextExtractor().text(source)
     lines = [re.sub(r"\s+", " ", line).strip() for line in text.splitlines()]
-    games: list[dict[str, str]] = []
+    games = []
     current: dict[str, list[str]] = {}
 
     def flush() -> None:
         nonlocal current
         if current:
-            game: dict[str, str] = {}
-            for label, values in current.items():
-                game[label] = values[-1]
-            if any(label in game for label in ("北米版のタイトル", "欧州版のタイトル", "国内版のタイトル(アルファベット表記)", "国内版のタイトル")):
+            game = {label: values[-1] for label, values in current.items()}
+            if any(label in game for label in (
+                "北米版のタイトル", "欧州版のタイトル",
+                "国内版のタイトル(アルファベット表記)", "国内版のタイトル",
+            )):
                 games.append(game)
             current = {}
 
     i = 0
     while i < len(lines):
-        line = lines[i]
-        match = TITLE_LINE.match(line)
+        match = TITLE_LINE.match(lines[i])
         if match:
             label, value = match.groups()
-            # Some entries have no release-year/publisher metadata. Start a new
-            # game when the next North American title appears, otherwise several
-            # games collapse into one record and most titles become unmatchable.
             if label == "北米版のタイトル" and any(
                 key in current for key in (
-                    "北米版のタイトル",
-                    "欧州版のタイトル",
-                    "国内版のタイトル(アルファベット表記)",
-                    "国内版のタイトル",
+                    "北米版のタイトル", "欧州版のタイトル",
+                    "国内版のタイトル(アルファベット表記)", "国内版のタイトル",
                 )
             ):
                 flush()
@@ -118,12 +188,11 @@ def _parse_games(source: str) -> list[dict[str, str]]:
                 value = lines[i].strip()
             if value:
                 current.setdefault(label, []).append(value)
-        elif META_LINE.match(line):
+        elif META_LINE.match(lines[i]):
             flush()
         i += 1
     flush()
     return games
-
 
 def _debug_log(log_path: Path | None, message: str) -> None:
     if log_path is None:
