@@ -72,13 +72,18 @@ python -m pytest -q
 
 テストにはiNESヘッダー除去、ZIPのCRC32取得、Logiqx XMLおよびclrmamepro DATのSQLite取り込みと完全一致照合を含みます。
 
-## ローマ字タイトル辞書（GB / NES / SNES）
+## ローマ字タイトル辞書（全システム自動検出）
 
-実行ファイルと同じフォルダに、次のTSVファイルを置くと、オンラインDBで日本語タイトルを取得できなかったROMをローマ字辞書で補完します。
+実行ファイルと同じフォルダに `<システムフォルダ名>-title-romaji.tsv` を置くと、オンラインDBで日本語タイトルを取得できなかったROMをローマ字辞書で補完します。ファイルは起動時ではなく照合時に検索するため、対応するTSVを追加すればプログラムの修正は不要です。
 
-- `gb-title-romaji.tsv`：GB
-- `nes-title-romaji.tsv`：NES / ファミコン
-- `snes-title-romaji.tsv`：SNES / スーパーファミコン
+例：
+- `gb-title-romaji.tsv`：`gb` フォルダ
+- `nes-title-romaji.tsv`：`nes` フォルダ（`famicom` / `fc` も対応）
+- `snes-title-romaji.tsv`：`snes` フォルダ（`sfc` / `superfamicom` も対応）
+- `psx-title-romaji.tsv`：`psx` フォルダ
+- `megadrive-title-romaji.tsv`：`megadrive` フォルダ
+
+既知の別名（例：`famicom` → `nes`）以外は、TSV名の `-title-romaji.tsv` より前の部分と、選択したシステムフォルダ名が一致すれば自動認識します。
 
 文字コードはUTF-8（BOMあり可）、タブ区切りで、先頭行に `original_title`, `romaji`, `status` の列名を指定します。
 
