@@ -100,3 +100,11 @@ def test_emu_russia_parses_domestic_title_and_matches_filename(monkeypatch, tmp_
     assert result["title"] == "魂斗羅ザ・ハードコア"
     assert result["source"] == "emu-russia.net"
 
+
+def test_emu_russia_ignores_filename_suffix_after_japan_marker():
+    from romtitler.emu_russia import _tokens
+
+    assert _tokens("Contra-Hard_Corps (J).bin") == ["contra", "hard", "corps"]
+    assert _tokens("Contra-Hard_Corps (Japan).bin") == ["contra", "hard", "corps"]
+    assert _tokens("Contra-Hard_Corps (Japan Rev A).bin") == ["contra", "hard", "corps"]
+    assert _tokens("Contra-Hard_Corps (USA).bin") == ["contra", "hard", "corps", "usa"]
