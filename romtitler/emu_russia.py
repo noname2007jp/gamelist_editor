@@ -7,6 +7,7 @@ import urllib.error
 import urllib.parse
 import urllib.request
 from html.parser import HTMLParser
+from urllib.parse import urljoin
 from pathlib import Path
 
 BASE_URL = "https://emu-russia.net/jp/roms"
@@ -139,6 +140,113 @@ def _fetch_page(platform: str, cache_dir: Path) -> str | None:
         return None
 
 
+
+class _SearchFormParser(HTMLParser):
+    """Find a keyword search form and preserve its hidden/default fields."""
+
+    def __init__(self) -> None:
+        super().__init__(convert_charrefs=True)
+        self.forms: list[dict[str, object]] = []
+        self.current: dict[str, object] | None = None
+
+    def handle_starttag(self, tag: str, attrs: list[tuple[str, str | None]]) -> None:
+        values = dict(attrs)
+        if tag == "form":
+            self.current = {
+                "action": values.get("action") or "",
+                "method": (values.get("method") or "get").lower(),
+                "fields": [],
+            }
+            self.forms.append(self.current)
+        elif tag == "input" and self.current is not None:
+            name = values.get("name")
+            if name and values.get("type", "text").lower() not in ("submit", "button", "image", "reset", "file"):
+                fields = self.current["fields"]
+                assert isinstance(fields, list)
+                fields.append({
+                    "name": name,
+                    "value": values.get("value") or "",
+                    "type": (values.get("type") or "text").lower(),
+                })
+
+    def handle_endtag(self, tag: str) -> None:
+        if tag == "form":
+            self.current = None
+
+
+def _search_catalogue_page(platform: str, filename: str, cache_dir: Path) -> str | None:
+    """Submit the ROM-derived words to emu-russia's own keyword search form."""
+    catalogue = _fetch_page(platform, cache_dir)
+    if not catalogue:
+        return None
+
+    parser = _SearchFormParser()
+    try:
+        parser.feed(catalogue)
+    except (ValueError, AssertionError):
+        return catalogue
+
+    for form in parser.forms:
+        fields = form.get("fields", [])
+        if not isinstance(fields, list):
+            continue
+        text_fields = [field for field in fields if field.get("type") in ("text", "search")]
+        if not text_fields:
+            continue
+        # Prefer a field explicitly named for search; otherwise use the first text box.
+        query_field = next(
+            (field for field in text_fields
+             if re.search(r"search|query|keyword|key|word|s$", str(field.get("name", "")), re.I)),
+            text_fields[0],
+        )
+        query_words = " ".join(_tokens(filename))
+        if not query_words:
+            return None
+        payload = {
+            str(field["name"]): str(field.get("value", ""))
+            for field in fields
+            if field is not query_field
+        }
+        payload[str(query_field["name"])] = query_words
+        action = urljoin(f"{BASE_URL}/{platform}/0-z/full/", str(form.get("action") or ""))
+        method = str(form.get("method") or "get").lower()
+        encoded = urllib.parse.urlencode(payload).encode("utf-8")
+        if method == "post":
+            request = urllib.request.Request(action, data=encoded, headers={
+                "User-Agent": USER_AGENT,
+                "Accept": "text/html,application/xhtml+xml",
+                "Content-Type": "application/x-www-form-urlencoded",
+                "Referer": f"{BASE_URL}/{platform}/0-z/full/",
+            })
+        else:
+            separator = "&" if urllib.parse.urlparse(action).query else "?"
+            request = urllib.request.Request(action + separator + encoded.decode("ascii"), headers={
+                "User-Agent": USER_AGENT,
+                "Accept": "text/html,application/xhtml+xml",
+                "Referer": f"{BASE_URL}/{platform}/0-z/full/",
+            })
+        try:
+            with urllib.request.urlopen(request, timeout=20) as response:
+                raw = response.read()
+                charset = response.headers.get_content_charset() or "utf-8"
+                result_page = raw.decode(charset, errors="replace")
+            if len(result_page) > 100 and (
+                "国内版のタイトル" in result_page or "北米版のタイトル" in result_page
+            ):
+                print(f"[emu-russia] 検索: platform={platform}, keyword={query_words!r}, url={response.geturl()}")
+                return result_page
+            print(f"[emu-russia] 検索結果にタイトル情報がありません: platform={platform}, keyword={query_words!r}")
+            return result_page
+        except (OSError, urllib.error.URLError, TimeoutError, ValueError) as exc:
+            print(f"[emu-russia] サイト内検索に失敗: platform={platform}, keyword={query_words!r}: {exc}")
+            return catalogue
+
+    # If the page layout changes or no form can be identified, keep the old catalogue
+    # as a fallback so the feature remains usable.
+    print(f"[emu-russia] 検索フォームを特定できないため一覧照合にフォールバック: platform={platform}")
+    return catalogue
+
+
 def lookup_emu_russia_title(system_folder: str, filename: str, cache_dir: Path) -> dict[str, str] | None:
     """Look up a ROM filename against emu-russia's platform catalogue.
 
@@ -153,7 +261,7 @@ def lookup_emu_russia_title(system_folder: str, filename: str, cache_dir: Path) 
     wanted = _tokens(filename)
     if not wanted:
         return None
-    source = _fetch_page(platform, cache_dir)
+    source = _search_catalogue_page(platform, filename, cache_dir)
     if not source:
         return None
 
