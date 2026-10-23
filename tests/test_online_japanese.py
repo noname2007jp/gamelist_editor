@@ -109,8 +109,7 @@ def test_emu_russia_ignores_filename_suffix_after_japan_marker():
     assert _tokens("Contra-Hard_Corps (Japan Rev A).bin") == ["contra", "hard", "corps"]
     assert _tokens("Contra-Hard_Corps (USA).bin") == ["contra", "hard", "corps"]
 
-def test_emu_russia_search_form_uses_clean_rom_words(monkeypatch, tmp_path):
-    from io import BytesIO
+def test_emu_russia_uses_local_catalogue_without_search_request(monkeypatch, tmp_path):
     import romtitler.emu_russia as emu_russia
 
     catalogue = """
@@ -121,41 +120,46 @@ def test_emu_russia_search_form_uses_clean_rom_words(monkeypatch, tmp_path):
     <div>北米版のタイトル Contra - Hard Corps</div>
     <div>国内版のタイトル 魂斗羅ザ・ハードコア</div>
     """
-    result_page = """
-    <div>北米版のタイトル Contra - Hard Corps</div>
-    <div>国内版のタイトル 魂斗羅ザ・ハードコア</div>
-    <div>発売年 1994</div>
-    """
-
-    class FakeResponse:
-        headers = type("Headers", (), {"get_content_charset": lambda self: "utf-8"})()
-
-        def __init__(self, body, url):
-            self.body = body.encode("utf-8")
-            self.url = url
-
-        def __enter__(self):
-            return self
-
-        def __exit__(self, *args):
-            return False
-
-        def read(self):
-            return self.body
-
-        def geturl(self):
-            return self.url
-
     monkeypatch.setattr(emu_russia, "_fetch_page", lambda platform, cache_dir: catalogue)
-    captured = {}
 
-    def fake_urlopen(request, timeout=20):
-        captured["url"] = request.full_url
-        return FakeResponse(result_page, request.full_url)
+    def unexpected_urlopen(*args, **kwargs):
+        raise AssertionError("local catalogue lookup must not send a search request")
 
-    monkeypatch.setattr(emu_russia.urllib.request, "urlopen", fake_urlopen)
+    monkeypatch.setattr(emu_russia.urllib.request, "urlopen", unexpected_urlopen)
     page = emu_russia._search_catalogue_page(
         "gen", "Contra-Hard_Corps (Japan).bin", tmp_path
     )
-    assert "keyword=contra+hard+corps" in captured["url"]
+    assert page == catalogue
     assert "国内版のタイトル" in page
+
+
+def test_emu_russia_parses_live_catalogue_table_rows():
+    from romtitler.emu_russia import _parse_games
+
+    page = """
+    <table class="gdb_table">
+      <tr><td class="gdb_left_col">北米版のタイトル</td>
+          <td class="gdb_right_col"><b>Super Mario Bros.</b></td></tr>
+      <tr><td class="gdb_left_col">国内版のタイトル</td>
+          <td class="gdb_right_col"><b>スーパーマリオブラザーズ</b></td></tr>
+      <tr><td class="gdb_left_col">海賊版のタイトル</td>
+          <td class="gdb_right_col"><b>Frog Prince</b></td></tr>
+      <tr><td class="gdb_left_col">海賊版のタイトル</td>
+          <td class="gdb_right_col"><b>Mushroom</b></td></tr>
+      <tr><td class="gdb_left_col">発売年</td>
+          <td class="gdb_right_col"><b>1985</b></td></tr>
+      <tr><td class="gdb_left_col">北米版のタイトル</td>
+          <td class="gdb_right_col"><b>Another Game</b></td></tr>
+      <tr><td class="gdb_left_col">国内版のタイトル</td>
+          <td class="gdb_right_col"><b>別のゲーム</b></td></tr>
+      <tr><td class="gdb_left_col">発売年</td>
+          <td class="gdb_right_col"><b>1990</b></td></tr>
+    </table>
+    """
+    games = _parse_games(page)
+    assert len(games) == 2
+    assert games[0]["北米版のタイトル"] == "Super Mario Bros."
+    assert games[0]["国内版のタイトル"] == "スーパーマリオブラザーズ"
+    # Repeated pirate-title rows are retained as the last alias for now.
+    assert games[0]["海賊版のタイトル"] == "Mushroom"
+    assert games[1]["国内版のタイトル"] == "別のゲーム"
