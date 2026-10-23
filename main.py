@@ -442,9 +442,9 @@ class GameListEditor:
                         # then exact filename as a lower-confidence fallback.
                         hash_candidates = secondary or primary
                         crcs = list(dict.fromkeys(c.crc32 for c in hash_candidates if getattr(c, "crc32", "")))
-                        jp_result = lookup_japanese_title(folder.name, rom_path.name, crcs, cache_root)
+                        jp_result = lookup_emu_russia_title(folder.name, rom_path.name, cache_root)
                         if not jp_result:
-                            jp_result = lookup_emu_russia_title(folder.name, rom_path.name, cache_root)
+                            jp_result = lookup_japanese_title(folder.name, rom_path.name, crcs, cache_root)
                         if not jp_result:
                             jp_result = lookup_romaji_title(folder.name, rom_path.name, self.app_dir)
                         if jp_result:
