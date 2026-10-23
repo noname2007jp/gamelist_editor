@@ -239,86 +239,14 @@ class _SearchFormParser(HTMLParser):
 
 
 def _search_catalogue_page(platform: str, filename: str, cache_dir: Path, log_path: Path | None = None) -> str | None:
-    """Submit the ROM-derived words to emu-russia's own keyword search form."""
-    # Preserve compatibility with tests and callers that replace _fetch_page
-    # with the original two-argument callable when diagnostics are disabled.
-    catalogue = _fetch_page(platform, cache_dir) if log_path is None else _fetch_page(platform, cache_dir, log_path)
-    if not catalogue:
-        return None
+    """Return the locally cached catalogue; do not submit a site search request."""
+    # Search POST currently fails TLS verification in Python. The full catalogue
+    # contains the titles needed for local matching, so use it directly.
+    _debug_log(log_path, f"ローカル一覧検索: platform={platform}, filename={filename!r}")
+    return _fetch_page(platform, cache_dir) if log_path is None else _fetch_page(platform, cache_dir, log_path)
 
-    parser = _SearchFormParser()
-    try:
-        parser.feed(catalogue)
-    except (ValueError, AssertionError):
-        return catalogue
 
-    for form in parser.forms:
-        fields = form.get("fields", [])
-        if not isinstance(fields, list):
-            continue
-        text_fields = [field for field in fields if field.get("type") in ("text", "search")]
-        if not text_fields:
-            continue
-        # Prefer a field explicitly named for search; otherwise use the first text box.
-        query_field = next(
-            (field for field in text_fields
-             if re.search(r"search|query|keyword|key|word|s$", str(field.get("name", "")), re.I)),
-            text_fields[0],
-        )
-        query_words = " ".join(_tokens(filename))
-        _debug_log(log_path, f"フォーム検出: action={form.get('action')!r}, method={form.get('method')!r}, fields={fields!r}, query_field={query_field.get('name')!r}, keyword={query_words!r}")
-        if not query_words:
-            return None
-        payload = {
-            str(field["name"]): str(field.get("value", ""))
-            for field in fields
-            if field is not query_field
-        }
-        payload[str(query_field["name"])] = query_words
-        action = urljoin(f"{BASE_URL}/{platform}/0-z/full/", str(form.get("action") or ""))
-        method = str(form.get("method") or "get").lower()
-        encoded = urllib.parse.urlencode(payload).encode("utf-8")
-        if method == "post":
-            _debug_log(log_path, f"検索 POST: url={action}, payload={encoded.decode('utf-8', errors='replace')}")
-            request = urllib.request.Request(action, data=encoded, headers={
-                "User-Agent": USER_AGENT,
-                "Accept": "text/html,application/xhtml+xml",
-                "Content-Type": "application/x-www-form-urlencoded",
-                "Referer": f"{BASE_URL}/{platform}/0-z/full/",
-            })
-        else:
-            separator = "&" if urllib.parse.urlparse(action).query else "?"
-            request_url = action + separator + encoded.decode("ascii")
-            _debug_log(log_path, f"検索 GET: {request_url}")
-            request = urllib.request.Request(request_url, headers={
-                "User-Agent": USER_AGENT,
-                "Accept": "text/html,application/xhtml+xml",
-                "Referer": f"{BASE_URL}/{platform}/0-z/full/",
-            })
-        try:
-            with urllib.request.urlopen(request, timeout=20) as response:
-                raw = response.read()
-                charset = response.headers.get_content_charset() or "utf-8"
-                result_page = raw.decode(charset, errors="replace")
-                _debug_log(log_path, f"検索応答: status={getattr(response, 'status', '不明')}, final_url={response.geturl() if callable(getattr(response, 'geturl', None)) else request.full_url}, bytes={len(raw)}, charset={charset}")
-            _debug_log(log_path, f"検索応答のタイトルラベル: 国内版={'国内版のタイトル' in result_page}, 北米版={'北米版のタイトル' in result_page}, chars={len(result_page)}")
-            if len(result_page) > 100 and (
-                "国内版のタイトル" in result_page or "北米版のタイトル" in result_page
-            ):
-                print(f"[emu-russia] 検索: platform={platform}, keyword={query_words!r}, url={response.geturl() if callable(getattr(response, 'geturl', None)) else request.full_url}")
-                return result_page
-            print(f"[emu-russia] 検索結果にタイトル情報がありません: platform={platform}, keyword={query_words!r}")
-            return result_page
-        except (OSError, urllib.error.URLError, TimeoutError, ValueError) as exc:
-            _debug_log(log_path, f"検索リクエスト失敗: {type(exc).__name__}: {exc!r}")
-            print(f"[emu-russia] サイト内検索に失敗: platform={platform}, keyword={query_words!r}: {type(exc).__name__}: {exc}")
-            return catalogue
-
-    # If the page layout changes or no form can be identified, keep the old catalogue
-    # as a fallback so the feature remains usable.
-    _debug_log(log_path, f"検索フォームなし: platform={platform}; 一覧ページを照合")
-    print(f"[emu-russia] 検索フォームを特定できないため一覧照合にフォールバック: platform={platform}")
-    return catalogue
+_GAMES_CACHE: dict[str, list[dict[str, str]]] = {}
 
 
 def lookup_emu_russia_title(system_folder: str, filename: str, cache_dir: Path, debug_log_path: Path | None = None) -> dict[str, str] | None:
@@ -340,10 +268,14 @@ def lookup_emu_russia_title(system_folder: str, filename: str, cache_dir: Path, 
     if not source:
         return None
 
-    games = _parse_games(source)
+    if platform not in _GAMES_CACHE:
+        _GAMES_CACHE[platform] = _parse_games(source)
+        _debug_log(debug_log_path, f"ローカル一覧を解析: platform={platform}, タイトル件数={len(_GAMES_CACHE[platform])}")
+    games = _GAMES_CACHE[platform]
     _debug_log(debug_log_path, f"タイトル解析件数: {len(games)}")
-    if games:
+    if games and not _GAMES_CACHE.get(f"{platform}__logged_examples"):
         _debug_log(debug_log_path, f"解析タイトル例: {games[:3]!r}")
+        _GAMES_CACHE[f"{platform}__logged_examples"] = []
     candidates: list[tuple[tuple[int, int, int], dict[str, str], str]] = []
     foreign_labels = ("北米版のタイトル", "欧州版のタイトル", "国内版のタイトル(アルファベット表記)", "海賊版のタイトル")
     for game in games:
