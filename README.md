@@ -72,6 +72,23 @@ python -m pytest -q
 
 テストにはiNESヘッダー除去、ZIPのCRC32取得、Logiqx XMLおよびclrmamepro DATのSQLite取り込みと完全一致照合を含みます。
 
+## ローマ字タイトル辞書（GB / NES / SNES）
+
+実行ファイルと同じフォルダに、次のTSVファイルを置くと、オンラインDBで日本語タイトルを取得できなかったROMをローマ字辞書で補完します。
+
+- `gb-title-romaji.tsv`：GB
+- `nes-title-romaji.tsv`：NES / ファミコン
+- `snes-title-romaji.tsv`：SNES / スーパーファミコン
+
+文字コードはUTF-8（BOMあり可）、タブ区切りで、先頭行に `original_title`, `romaji`, `status` の列名を指定します。
+
+```tsv
+original_title	romaji	status
+スーパーマリオランド	suupaamariorando	kana_romanized
+```
+
+ROMファイル名から拡張子と括弧・角括弧内の地域情報を除き、スペース区切りの各語をローマ字欄と照合します。**一致した語の数が多い候補を優先し、同数なら一致しなかった文字数が少ない候補**を採用します。さらに同点の場合は、一致した文字数が多い候補を優先します。ファイル名や辞書だけでは誤判定を完全には防げないため、XMLに保存する前に候補を確認してください。
+
 ## 日本語名辞書
 
 `titles_ja.csv` をUTF-8（BOMありでも可）で編集します。列は `filename,title_ja` です。
