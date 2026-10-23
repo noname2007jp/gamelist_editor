@@ -4,15 +4,15 @@ import csv
 import re
 from pathlib import Path
 
-SYSTEM_FILES = {
-    "gb": "gb-title-romaji.tsv",
-    "gameboy": "gb-title-romaji.tsv",
-    "nes": "nes-title-romaji.tsv",
-    "famicom": "nes-title-romaji.tsv",
-    "fc": "nes-title-romaji.tsv",
-    "snes": "snes-title-romaji.tsv",
-    "sfc": "snes-title-romaji.tsv",
-    "superfamicom": "snes-title-romaji.tsv",
+
+# Folder names that are aliases for the canonical TSV prefix.
+# Any other system is discovered automatically from <system>-title-romaji.tsv.
+SYSTEM_ALIASES = {
+    "gameboy": "gb",
+    "famicom": "nes",
+    "fc": "nes",
+    "sfc": "snes",
+    "superfamicom": "snes",
 }
 
 
@@ -26,6 +26,18 @@ def _tokens(filename: str) -> list[str]:
     # are metadata rather than part of the title.
     stem = re.sub(r"\([^)]*\)|\[[^]]*\]", " ", stem)
     return [_normalize(part) for part in stem.split() if _normalize(part)]
+
+
+def _find_tsv(system_folder: str, app_dir: Path) -> Path | None:
+    """Find <system>-title-romaji.tsv next to the application."""
+    system_key = _normalize(system_folder)
+    system_key = SYSTEM_ALIASES.get(system_key, system_key)
+    # Sorting makes behavior deterministic if differently-cased names coexist.
+    for path in sorted(Path(app_dir).glob("*-title-romaji.tsv"), key=lambda p: p.name.casefold()):
+        prefix = path.name[:-len("-title-romaji.tsv")]
+        if _normalize(prefix) == system_key and path.is_file():
+            return path
+    return None
 
 
 def load_romaji_titles(tsv_path: Path) -> list[dict[str, str]]:
@@ -51,19 +63,20 @@ def load_romaji_titles(tsv_path: Path) -> list[dict[str, str]]:
 def lookup_romaji_title(system_folder: str, filename: str, app_dir: Path) -> dict[str, str] | None:
     """Match filename space-separated tokens against the system's romaji TSV.
 
-    Ranking: most matching filename tokens, then fewest unmatched filename
-    characters, then most matched characters. Exact ties retain TSV order.
+    TSV files are discovered automatically using the naming pattern
+    <system>-title-romaji.tsv. Ranking: most matching filename tokens, then
+    fewest unmatched filename characters, then most matched characters.
+    Exact ties retain TSV order.
     """
-    system_key = re.sub(r"[^a-z0-9]", "", system_folder.casefold())
-    tsv_name = SYSTEM_FILES.get(system_key)
-    if not tsv_name:
+    tsv_path = _find_tsv(system_folder, app_dir)
+    if tsv_path is None:
         return None
 
     tokens = _tokens(filename)
     if not tokens:
         return None
 
-    rows = load_romaji_titles(Path(app_dir) / tsv_name)
+    rows = load_romaji_titles(tsv_path)
     best: tuple[tuple[int, int, int], dict[str, str]] | None = None
     for row in rows:
         romanized = _normalize(row["romaji"])
@@ -86,6 +99,6 @@ def lookup_romaji_title(system_folder: str, filename: str, app_dir: Path) -> dic
         "title": row["original_title"],
         "confidence": "ローマ字辞書一致",
         "match_type": "romaji_tsv",
-        "source": tsv_name,
+        "source": tsv_path.name,
         "status": row["status"],
     }
