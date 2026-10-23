@@ -122,15 +122,28 @@ def _parse_games(source: str) -> list[dict[str, str]]:
     return games
 
 
-def _fetch_page(platform: str, cache_dir: Path) -> str | None:
-    cache_path = Path(cache_dir) / "emu_russia" / f"{platform}-0-z-full.html"
+def _debug_log(log_path: Path | None, message: str) -> None:
+    if log_path is None:
+        return
+    try:
+        log_path.parent.mkdir(parents=True, exist_ok=True)
+        with log_path.open("a", encoding="utf-8") as stream:
+            stream.write(f"{time.strftime('%Y-%m-%d %H:%M:%S')} {message}\\n")
+    except OSError:
+        pass
+
+
+def _fetch_page(platform: str, cache_dir: Path, log_path: Path | None = None) -> str | None:
+        cache_path = Path(cache_dir) / "emu_russia" / f"{platform}-0-z-full.html"
     if cache_path.is_file() and time.time() - cache_path.stat().st_mtime < CACHE_SECONDS:
         try:
+            _debug_log(log_path, f"キャッシュ使用: {cache_path}")
             return cache_path.read_text(encoding="utf-8")
         except OSError:
             pass
 
     url = f"{BASE_URL}/{urllib.parse.quote(platform, safe='')}/0-z/full/"
+    _debug_log(log_path, f"一覧 GET: {url}")
     request = urllib.request.Request(url, headers={
         "User-Agent": USER_AGENT,
         "Accept": "text/html,application/xhtml+xml",
@@ -140,7 +153,9 @@ def _fetch_page(platform: str, cache_dir: Path) -> str | None:
             raw = response.read()
             charset = response.headers.get_content_charset() or "utf-8"
             source = raw.decode(charset, errors="replace")
+            _debug_log(log_path, f"一覧応答: status={response.status}, final_url={response.geturl()}, bytes={len(raw)}, charset={charset}")
         if len(source) < 1000 or "国内版のタイトル" not in source and "北米版のタイトル" not in source:
+            _debug_log(log_path, f"一覧ページ形式不一致: chars={len(source)}, 国内版ラベル={'国内版のタイトル' in source}, 北米版ラベル={'北米版のタイトル' in source}")
             return None
         cache_path.parent.mkdir(parents=True, exist_ok=True)
         temp = cache_path.with_suffix(".download")
@@ -186,9 +201,9 @@ class _SearchFormParser(HTMLParser):
             self.current = None
 
 
-def _search_catalogue_page(platform: str, filename: str, cache_dir: Path) -> str | None:
+def _search_catalogue_page(platform: str, filename: str, cache_dir: Path, log_path: Path | None = None) -> str | None:
     """Submit the ROM-derived words to emu-russia's own keyword search form."""
-    catalogue = _fetch_page(platform, cache_dir)
+    catalogue = _fetch_page(platform, cache_dir, log_path)
     if not catalogue:
         return None
 
@@ -212,6 +227,7 @@ def _search_catalogue_page(platform: str, filename: str, cache_dir: Path) -> str
             text_fields[0],
         )
         query_words = " ".join(_tokens(filename))
+        _debug_log(log_path, f"フォーム検出: action={form.get('action')!r}, method={form.get('method')!r}, fields={fields!r}, query_field={query_field.get('name')!r}, keyword={query_words!r}")
         if not query_words:
             return None
         payload = {
@@ -224,6 +240,7 @@ def _search_catalogue_page(platform: str, filename: str, cache_dir: Path) -> str
         method = str(form.get("method") or "get").lower()
         encoded = urllib.parse.urlencode(payload).encode("utf-8")
         if method == "post":
+            _debug_log(log_path, f"検索 POST: url={action}, payload={encoded.decode('utf-8', errors='replace')}")
             request = urllib.request.Request(action, data=encoded, headers={
                 "User-Agent": USER_AGENT,
                 "Accept": "text/html,application/xhtml+xml",
@@ -232,7 +249,9 @@ def _search_catalogue_page(platform: str, filename: str, cache_dir: Path) -> str
             })
         else:
             separator = "&" if urllib.parse.urlparse(action).query else "?"
-            request = urllib.request.Request(action + separator + encoded.decode("ascii"), headers={
+            request_url = action + separator + encoded.decode("ascii")
+            _debug_log(log_path, f"検索 GET: {request_url}")
+            request = urllib.request.Request(request_url, headers={
                 "User-Agent": USER_AGENT,
                 "Accept": "text/html,application/xhtml+xml",
                 "Referer": f"{BASE_URL}/{platform}/0-z/full/",
@@ -242,6 +261,8 @@ def _search_catalogue_page(platform: str, filename: str, cache_dir: Path) -> str
                 raw = response.read()
                 charset = response.headers.get_content_charset() or "utf-8"
                 result_page = raw.decode(charset, errors="replace")
+                _debug_log(log_path, f"検索応答: status={response.status}, final_url={response.geturl()}, bytes={len(raw)}, charset={charset}")
+            _debug_log(log_path, f"検索応答のタイトルラベル: 国内版={'国内版のタイトル' in result_page}, 北米版={'北米版のタイトル' in result_page}, chars={len(result_page)}")
             if len(result_page) > 100 and (
                 "国内版のタイトル" in result_page or "北米版のタイトル" in result_page
             ):
@@ -255,11 +276,12 @@ def _search_catalogue_page(platform: str, filename: str, cache_dir: Path) -> str
 
     # If the page layout changes or no form can be identified, keep the old catalogue
     # as a fallback so the feature remains usable.
+    _debug_log(log_path, f"検索フォームなし: platform={platform}; 一覧ページを照合")
     print(f"[emu-russia] 検索フォームを特定できないため一覧照合にフォールバック: platform={platform}")
     return catalogue
 
 
-def lookup_emu_russia_title(system_folder: str, filename: str, cache_dir: Path) -> dict[str, str] | None:
+def lookup_emu_russia_title(system_folder: str, filename: str, cache_dir: Path, debug_log_path: Path | None = None) -> dict[str, str] | None:
     """Look up a ROM filename against emu-russia's platform catalogue.
 
     The site publishes catalogue pages with foreign, Japanese-romaji, and Japanese
@@ -273,13 +295,18 @@ def lookup_emu_russia_title(system_folder: str, filename: str, cache_dir: Path) 
     wanted = _tokens(filename)
     if not wanted:
         return None
-    source = _search_catalogue_page(platform, filename, cache_dir)
+    _debug_log(debug_log_path, f"照合開始: system={system_folder!r}, platform={platform}, filename={filename!r}, tokens={wanted!r}")
+    source = _search_catalogue_page(platform, filename, cache_dir, debug_log_path)
     if not source:
         return None
 
+    games = _parse_games(source)
+    _debug_log(debug_log_path, f"タイトル解析件数: {len(games)}")
+    if games:
+        _debug_log(debug_log_path, f"解析タイトル例: {games[:3]!r}")
     candidates: list[tuple[tuple[int, int, int], dict[str, str], str]] = []
     foreign_labels = ("北米版のタイトル", "欧州版のタイトル", "国内版のタイトル(アルファベット表記)", "海賊版のタイトル")
-    for game in _parse_games(source):
+    for game in games:
         native_title = game.get("国内版のタイトル", "").strip()
         if not native_title:
             continue
@@ -302,6 +329,7 @@ def lookup_emu_russia_title(system_folder: str, filename: str, cache_dir: Path) 
             score = (exact, coverage, -extra)
             candidates.append((score, game, title))
 
+    _debug_log(debug_log_path, f"一致候補件数: {len(candidates)}")
     if not candidates:
         return None
     candidates.sort(key=lambda item: item[0], reverse=True)
