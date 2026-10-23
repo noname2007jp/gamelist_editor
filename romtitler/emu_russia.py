@@ -1,7 +1,10 @@
 from __future__ import annotations
 
 import html
+import os
 import re
+import ssl
+import subprocess
 import time
 import urllib.error
 import urllib.parse
@@ -162,12 +165,8 @@ def _fetch_page(platform: str, cache_dir: Path, log_path: Path | None = None) ->
         # certificate store. This can validate a server chain that Python/OpenSSL
         # rejects because of an expired certificate in an alternate chain.
         # Keep certificate verification enabled; never use curl's --insecure flag.
-        if (
-            __import__("os").name == "nt"
-            and isinstance(reason, __import__("ssl").SSLCertVerificationError)
-        ):
+        if os.name == "nt" and isinstance(reason, ssl.SSLCertVerificationError):
             try:
-                import subprocess
                 result = subprocess.run(
                     [
                         "curl.exe", "--fail", "--silent", "--show-error",
