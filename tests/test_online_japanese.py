@@ -76,3 +76,11 @@ def test_romaji_tsv_aliases_still_work(tmp_path):
     result = lookup_romaji_title("famicom", "suupaa mario rando.zip", tmp_path)
     assert result is not None
     assert result["title"] == "スーパーマリオランド"
+
+def test_romaji_tokens_split_on_filename_punctuation():
+    from romtitler.romaji_titles import _tokens
+
+    assert _tokens("Super-Mario_World (Japan).zip") == [
+        "super", "mario", "world", "japan"
+    ]
+
