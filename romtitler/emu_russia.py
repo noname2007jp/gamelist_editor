@@ -16,7 +16,14 @@ PLATFORM_SLUGS = {
     "nes": "nes", "famicom": "nes", "fc": "nes",
     "snes": "snes", "sfc": "snes", "superfamicom": "snes",
     "gb": "gb", "gameboy": "gb",
+    "gbc": "gbc", "gameboycolor": "gbc",
     "genesis": "gen", "megadrive": "gen", "md": "gen",
+    "gamegear": "gg", "gg": "gg", "sms": "sms", "mastersystem": "sms",
+    "pcengine": "tg16", "pce": "tg16", "turbografx16": "tg16",
+    "n64": "n64", "nintendo64": "n64",
+    "ws": "ws", "wonderswan": "ws", "wsc": "wsc", "wonderswancolor": "wsc",
+    "ngp": "ngp", "ngpc": "ngpc",
+    "atari2600": "a2600", "cps1": "cps1", "cps2": "cps2",
 }
 TITLE_LABELS = (
     "北米版のタイトル", "欧州版のタイトル", "国内版のタイトル(アルファベット表記)",
@@ -106,7 +113,7 @@ def _fetch_page(platform: str, cache_dir: Path) -> str | None:
         except OSError:
             pass
 
-    url = f"{BASE_URL}/{urllib.parse.quote(platform, safe='')}/0-Z/full/"
+    url = f"{BASE_URL}/{urllib.parse.quote(platform, safe='')}/0-z/full/"
     request = urllib.request.Request(url, headers={
         "User-Agent": USER_AGENT,
         "Accept": "text/html,application/xhtml+xml",
@@ -164,6 +171,8 @@ def lookup_emu_russia_title(system_folder: str, filename: str, cache_dir: Path) 
             if len(shared) < 2 and not exact_single:
                 continue
             coverage = len(set(shared)) * 1000 // max(1, len(set(wanted)))
+            if not exact_single and coverage < 600:
+                continue
             extra = len(set(candidate_tokens) - set(wanted))
             exact = int(_normalize("".join(wanted)) == _normalize("".join(candidate_tokens)))
             score = (exact, coverage, -extra)
