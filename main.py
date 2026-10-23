@@ -14,6 +14,7 @@ from tkinter import filedialog, messagebox, ttk
 
 from cjk_language_chars import SIMPLIFIED_CHARS, TRADITIONAL_CHARS
 from romtitler.dat_parser import build_database, find_match
+from romtitler.emu_russia import lookup_emu_russia_title
 from romtitler.hashing import hash_file
 from romtitler.online_dat import DEFAULT_SYSTEMS, download_dat_files
 from romtitler.online_japanese import lookup_japanese_title
@@ -442,6 +443,8 @@ class GameListEditor:
                         hash_candidates = secondary or primary
                         crcs = list(dict.fromkeys(c.crc32 for c in hash_candidates if getattr(c, "crc32", "")))
                         jp_result = lookup_japanese_title(folder.name, rom_path.name, crcs, cache_root)
+                        if not jp_result:
+                            jp_result = lookup_emu_russia_title(folder.name, rom_path.name, cache_root)
                         if not jp_result:
                             jp_result = lookup_romaji_title(folder.name, rom_path.name, self.app_dir)
                         if jp_result:
