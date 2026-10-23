@@ -438,8 +438,8 @@ class GameListEditor:
                             dat_title = " / ".join(names[:3])
                             result["titles"][normalized_xml_path(xml_path)] = dat_title
 
-                        # Japanese native-script title lookup: exact ROM hash first,
-                        # then exact filename as a lower-confidence fallback.
+                        # Prefer emu-russia's domestic title catalogue, then use the
+                        # existing exact-hash/filename API and romanized TSV fallbacks.
                         hash_candidates = secondary or primary
                         crcs = list(dict.fromkeys(c.crc32 for c in hash_candidates if getattr(c, "crc32", "")))
                         jp_result = lookup_emu_russia_title(folder.name, rom_path.name, cache_root)
