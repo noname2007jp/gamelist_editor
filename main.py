@@ -17,6 +17,7 @@ from romtitler.dat_parser import build_database, find_match
 from romtitler.hashing import hash_file
 from romtitler.online_dat import DEFAULT_SYSTEMS, download_dat_files
 from romtitler.online_japanese import lookup_japanese_title
+from romtitler.romaji_titles import lookup_romaji_title
 
 APP_TITLE = "gamelist_editor"
 NAME_TAGS = ("zh_CN", "en_US", "zh_TW", "ko_KR", "name")
@@ -125,6 +126,7 @@ class GameListEditor:
         self.xml_path: Path | None = None
         self.dictionary: dict[str, str] = {}
         app_dir = Path(sys.executable).resolve().parent if getattr(sys, "frozen", False) else Path(__file__).resolve().parent
+        self.app_dir = app_dir
         self.dictionary_path = app_dir / "titles_ja.csv"
         self.has_unsaved_changes = False
         self._build_ui()
@@ -438,6 +440,8 @@ class GameListEditor:
                         hash_candidates = secondary or primary
                         crcs = list(dict.fromkeys(c.crc32 for c in hash_candidates if getattr(c, "crc32", "")))
                         jp_result = lookup_japanese_title(folder.name, rom_path.name, crcs, cache_root)
+                        if not jp_result:
+                            jp_result = lookup_romaji_title(folder.name, rom_path.name, self.app_dir)
                         if jp_result:
                             result["japanese"][normalized_xml_path(xml_path)] = jp_result
                         self.root.after(0, lambda i=index, t=total: self.status_var.set(f"オンラインROM・日本語タイトル照合中：{i}/{t}"))
