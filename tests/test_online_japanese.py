@@ -84,3 +84,19 @@ def test_romaji_tokens_split_on_filename_punctuation():
         "super", "mario", "world", "japan"
     ]
 
+def test_emu_russia_parses_domestic_title_and_matches_filename(monkeypatch, tmp_path):
+    import romtitler.emu_russia as emu_russia
+
+    page = """
+    <div>北米版のタイトル Contra - Hard Corps</div>
+    <div>国内版のタイトル(アルファベット表記) Contra - The Hard Core</div>
+    <div>国内版のタイトル 魂斗羅ザ・ハードコア</div>
+    <div>発売年 1994</div>
+    """
+    monkeypatch.setattr(emu_russia, "_fetch_page", lambda platform, cache_dir: page)
+
+    result = emu_russia.lookup_emu_russia_title("genesis", "Contra-Hard_Corps (USA).bin", tmp_path)
+    assert result is not None
+    assert result["title"] == "魂斗羅ザ・ハードコア"
+    assert result["source"] == "emu-russia.net"
+
