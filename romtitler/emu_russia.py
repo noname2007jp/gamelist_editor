@@ -148,25 +148,62 @@ def _fetch_page(platform: str, cache_dir: Path, log_path: Path | None = None) ->
         "User-Agent": USER_AGENT,
         "Accept": "text/html,application/xhtml+xml",
     })
+    source: str | None = None
     try:
         with urllib.request.urlopen(request, timeout=20) as response:
             raw = response.read()
             charset = response.headers.get_content_charset() or "utf-8"
             source = raw.decode(charset, errors="replace")
             _debug_log(log_path, f"一覧応答: status={getattr(response, 'status', '不明')}, final_url={response.geturl() if callable(getattr(response, 'geturl', None)) else url}, bytes={len(raw)}, charset={charset}")
-        if len(source) < 1000 or "国内版のタイトル" not in source and "北米版のタイトル" not in source:
-            _debug_log(log_path, f"一覧ページ形式不一致: chars={len(source)}, 国内版ラベル={'国内版のタイトル' in source}, 北米版ラベル={'北米版のタイトル' in source}")
+    except (OSError, urllib.error.URLError, TimeoutError, ValueError) as exc:
+        reason = getattr(exc, "reason", None)
+        _debug_log(log_path, f"一覧取得失敗: {type(exc).__name__}: {exc!r}")
+        # On Windows, the built-in curl commonly uses Schannel and the Windows
+        # certificate store. This can validate a server chain that Python/OpenSSL
+        # rejects because of an expired certificate in an alternate chain.
+        # Keep certificate verification enabled; never use curl's --insecure flag.
+        if (
+            __import__("os").name == "nt"
+            and isinstance(reason, __import__("ssl").SSLCertVerificationError)
+        ):
+            try:
+                import subprocess
+                result = subprocess.run(
+                    [
+                        "curl.exe", "--fail", "--silent", "--show-error",
+                        "--location", "--max-time", "20",
+                        "--user-agent", USER_AGENT,
+                        "--header", "Accept: text/html,application/xhtml+xml",
+                        url,
+                    ],
+                    capture_output=True,
+                    timeout=25,
+                    check=True,
+                )
+                source = result.stdout.decode("utf-8-sig", errors="replace")
+                _debug_log(log_path, f"Windows curlで再取得成功: bytes={len(result.stdout)}")
+            except (OSError, subprocess.SubprocessError) as curl_exc:
+                _debug_log(log_path, f"Windows curlでの再取得失敗: {type(curl_exc).__name__}: {curl_exc!r}")
+                print(f"[emu-russia] {platform} ROM一覧の取得に失敗: Python={exc}; curl={curl_exc}")
+                return None
+        else:
+            print(f"[emu-russia] {platform} ROM一覧の取得に失敗: {type(exc).__name__}: {exc}")
             return None
+
+    if source is None:
+        return None
+    if len(source) < 1000 or "国内版のタイトル" not in source and "北米版のタイトル" not in source:
+        _debug_log(log_path, f"一覧ページ形式不一致: chars={len(source)}, 国内版ラベル={'国内版のタイトル' in source}, 北米版ラベル={'北米版のタイトル' in source}")
+        return None
+    try:
         cache_path.parent.mkdir(parents=True, exist_ok=True)
         temp = cache_path.with_suffix(".download")
         temp.write_text(source, encoding="utf-8")
         temp.replace(cache_path)
-        return source
-    except (OSError, urllib.error.URLError, TimeoutError, ValueError) as exc:
-        _debug_log(log_path, f"一覧取得失敗: {type(exc).__name__}: {exc!r}")
-        print(f"[emu-russia] {platform} ROM一覧の取得に失敗: {type(exc).__name__}: {exc}")
-        return None
-
+        _debug_log(log_path, f"一覧キャッシュ保存: {cache_path}")
+    except OSError as exc:
+        _debug_log(log_path, f"一覧キャッシュ保存失敗: {type(exc).__name__}: {exc!r}")
+    return source
 
 
 class _SearchFormParser(HTMLParser):
