@@ -153,7 +153,7 @@ def _fetch_page(platform: str, cache_dir: Path, log_path: Path | None = None) ->
             raw = response.read()
             charset = response.headers.get_content_charset() or "utf-8"
             source = raw.decode(charset, errors="replace")
-            _debug_log(log_path, f"一覧応答: status={response.status}, final_url={response.geturl()}, bytes={len(raw)}, charset={charset}")
+            _debug_log(log_path, f"一覧応答: status={getattr(response, 'status', '不明')}, final_url={response.geturl() if callable(getattr(response, 'geturl', None)) else url}, bytes={len(raw)}, charset={charset}")
         if len(source) < 1000 or "国内版のタイトル" not in source and "北米版のタイトル" not in source:
             _debug_log(log_path, f"一覧ページ形式不一致: chars={len(source)}, 国内版ラベル={'国内版のタイトル' in source}, 北米版ラベル={'北米版のタイトル' in source}")
             return None
@@ -263,12 +263,12 @@ def _search_catalogue_page(platform: str, filename: str, cache_dir: Path, log_pa
                 raw = response.read()
                 charset = response.headers.get_content_charset() or "utf-8"
                 result_page = raw.decode(charset, errors="replace")
-                _debug_log(log_path, f"検索応答: status={response.status}, final_url={response.geturl()}, bytes={len(raw)}, charset={charset}")
+                _debug_log(log_path, f"検索応答: status={getattr(response, 'status', '不明')}, final_url={response.geturl() if callable(getattr(response, 'geturl', None)) else request.full_url}, bytes={len(raw)}, charset={charset}")
             _debug_log(log_path, f"検索応答のタイトルラベル: 国内版={'国内版のタイトル' in result_page}, 北米版={'北米版のタイトル' in result_page}, chars={len(result_page)}")
             if len(result_page) > 100 and (
                 "国内版のタイトル" in result_page or "北米版のタイトル" in result_page
             ):
-                print(f"[emu-russia] 検索: platform={platform}, keyword={query_words!r}, url={response.geturl()}")
+                print(f"[emu-russia] 検索: platform={platform}, keyword={query_words!r}, url={response.geturl() if callable(getattr(response, 'geturl', None)) else request.full_url}")
                 return result_page
             print(f"[emu-russia] 検索結果にタイトル情報がありません: platform={platform}, keyword={query_words!r}")
             return result_page
