@@ -247,6 +247,7 @@ def _search_catalogue_page(platform: str, filename: str, cache_dir: Path, log_pa
 
 
 _GAMES_CACHE: dict[str, list[dict[str, str]]] = {}
+_GAMES_EXAMPLES_LOGGED: set[str] = set()
 
 
 def lookup_emu_russia_title(system_folder: str, filename: str, cache_dir: Path, debug_log_path: Path | None = None) -> dict[str, str] | None:
@@ -273,9 +274,9 @@ def lookup_emu_russia_title(system_folder: str, filename: str, cache_dir: Path, 
         _debug_log(debug_log_path, f"ローカル一覧を解析: platform={platform}, タイトル件数={len(_GAMES_CACHE[platform])}")
     games = _GAMES_CACHE[platform]
     _debug_log(debug_log_path, f"タイトル解析件数: {len(games)}")
-    if games and not _GAMES_CACHE.get(f"{platform}__logged_examples"):
+    if games and platform not in _GAMES_EXAMPLES_LOGGED:
         _debug_log(debug_log_path, f"解析タイトル例: {games[:3]!r}")
-        _GAMES_CACHE[f"{platform}__logged_examples"] = []
+        _GAMES_EXAMPLES_LOGGED.add(platform)
     candidates: list[tuple[tuple[int, int, int], dict[str, str], str]] = []
     foreign_labels = ("北米版のタイトル", "欧州版のタイトル", "国内版のタイトル(アルファベット表記)", "海賊版のタイトル")
     for game in games:
