@@ -49,3 +49,30 @@ def test_romaji_tsv_missing_file_returns_no_match(tmp_path):
     from romtitler.romaji_titles import lookup_romaji_title
 
     assert lookup_romaji_title("gb", "unknown.zip", tmp_path) is None
+
+
+def test_romaji_tsv_is_discovered_for_unlisted_system(tmp_path):
+    from romtitler.romaji_titles import lookup_romaji_title
+
+    (tmp_path / "psx-title-romaji.tsv").write_text(
+        "original_title\tromaji\tstatus\n"
+        "ファイナルファンタジーVII\tfainarufantajii vii\tkana_romanized\n",
+        encoding="utf-8",
+    )
+    result = lookup_romaji_title("psx", "fainaru fantajii vii (Japan).chd", tmp_path)
+    assert result is not None
+    assert result["title"] == "ファイナルファンタジーVII"
+    assert result["source"] == "psx-title-romaji.tsv"
+
+
+def test_romaji_tsv_aliases_still_work(tmp_path):
+    from romtitler.romaji_titles import lookup_romaji_title
+
+    (tmp_path / "nes-title-romaji.tsv").write_text(
+        "original_title\tromaji\tstatus\n"
+        "スーパーマリオランド\tsuupaamariorando\tkana_romanized\n",
+        encoding="utf-8",
+    )
+    result = lookup_romaji_title("famicom", "suupaa mario rando.zip", tmp_path)
+    assert result is not None
+    assert result["title"] == "スーパーマリオランド"
