@@ -113,6 +113,7 @@ class GameListEditor:
         self.folder_var = tk.StringVar()
         self.title_var = tk.StringVar()
         self.status_var = tk.StringVar(value="システムフォルダを選択してください。")
+        self.emu_russia_debug_var = tk.BooleanVar(value=False)
         self.tree = None
         self.entries: list[ET.Element] = []
         self.tree_to_game: dict[str, ET.Element] = {}
@@ -154,6 +155,7 @@ class GameListEditor:
         self.emu_russia_button.pack(side="left", padx=(0, 6))
         ttk.Button(action_row, text="日本語名を保存", command=self.save_titles).pack(side="left")
         ttk.Button(action_row, text="辞書CSVを開く", command=self.open_dictionary).pack(side="left", padx=6)
+        ttk.Checkbutton(action_row, text="emu-russia詳細ログ", variable=self.emu_russia_debug_var).pack(side="left", padx=(8, 0))
 
         table_frame = ttk.Frame(outer)
         table_frame.pack(fill="both", expand=True)
@@ -405,6 +407,15 @@ class GameListEditor:
         self.online_busy = True
         self.online_button.configure(state="disabled")
         self.emu_russia_button.configure(state="disabled")
+        debug_log_path = cache_root / "emu_russia_debug.log" if self.emu_russia_debug_var.get() else None
+        if debug_log_path is not None:
+            try:
+                debug_log_path.parent.mkdir(parents=True, exist_ok=True)
+                with debug_log_path.open("w", encoding="utf-8") as log:
+                    log.write(f"emu-russia 詳細ログ開始: 対象ROM {len(jobs)} 件\\n")
+            except OSError as exc:
+                messagebox.showwarning("ログ", f"ログファイルを作成できません。\\n{exc}")
+                debug_log_path = None
         self.status_var.set("emu-russia の国内版タイトルを照合しています…")
 
         def worker():
@@ -414,7 +425,7 @@ class GameListEditor:
                 total = len(jobs)
                 for index, (iid, xml_path, rom_path) in enumerate(jobs, 1):
                     try:
-                        jp_result = lookup_emu_russia_title(folder.name, rom_path.name, cache_root)
+                        jp_result = lookup_emu_russia_title(folder.name, rom_path.name, cache_root, debug_log_path)
                     except Exception as exc:
                         jp_result = None
                         errors.append(f"{rom_path.name}: {exc}")
