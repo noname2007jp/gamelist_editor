@@ -72,6 +72,12 @@ python -m pytest -q
 
 テストにはiNESヘッダー除去、ZIPのCRC32取得、Logiqx XMLおよびclrmamepro DATのSQLite取り込みと完全一致照合を含みます。
 
+## emu-russia のみで照合する
+
+GUIの **「emu-russiaのみ照合」** ボタンを使うと、国内版タイトルの検索元を emu-russia に限定できます。このモードではオンラインDATのダウンロードや Retronian GameDB・ローマ字辞書へのフォールバックを行いません。機種別カタログはローカルに7日間キャッシュし、照合結果は1件ずつ一覧に反映します。
+
+通常の **「オンラインROM照合」** は従来どおり、emu-russia → Retronian GameDB → ローマ字辞書の順に検索し、DATとのハッシュ照合も実行します。
+
 ## emu-russia 国内版タイトル検索
 
 「オンラインROM照合」では、対象機種に対応する emu-russia のROMカタログを取得し、ROMファイル名を単語に分割してタイトルを照合します。候補作品に「国内版のタイトル」が登録されていれば、その日本語タイトルを候補として表示します。
