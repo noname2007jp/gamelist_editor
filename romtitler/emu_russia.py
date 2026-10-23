@@ -128,13 +128,13 @@ def _debug_log(log_path: Path | None, message: str) -> None:
     try:
         log_path.parent.mkdir(parents=True, exist_ok=True)
         with log_path.open("a", encoding="utf-8") as stream:
-            stream.write(f"{time.strftime('%Y-%m-%d %H:%M:%S')} {message}\\n")
+            stream.write(f"{time.strftime('%Y-%m-%d %H:%M:%S')} {message}\n")
     except OSError:
         pass
 
 
 def _fetch_page(platform: str, cache_dir: Path, log_path: Path | None = None) -> str | None:
-        cache_path = Path(cache_dir) / "emu_russia" / f"{platform}-0-z-full.html"
+    cache_path = Path(cache_dir) / "emu_russia" / f"{platform}-0-z-full.html"
     if cache_path.is_file() and time.time() - cache_path.stat().st_mtime < CACHE_SECONDS:
         try:
             _debug_log(log_path, f"キャッシュ使用: {cache_path}")
