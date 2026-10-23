@@ -431,9 +431,11 @@ class GameListEditor:
                                 matches = find_match(connection, candidate.crc32, candidate.size, candidate.md5, candidate.sha1)
                                 if matches:
                                     break
+                        dat_title = ""
                         if matches:
                             names = list(dict.fromkeys(str(row["name"]) for row in matches))
-                            result["titles"][normalized_xml_path(xml_path)] = " / ".join(names[:3])
+                            dat_title = " / ".join(names[:3])
+                            result["titles"][normalized_xml_path(xml_path)] = dat_title
 
                         # Japanese native-script title lookup: exact ROM hash first,
                         # then exact filename as a lower-confidence fallback.
@@ -444,7 +446,15 @@ class GameListEditor:
                             jp_result = lookup_romaji_title(folder.name, rom_path.name, self.app_dir)
                         if jp_result:
                             result["japanese"][normalized_xml_path(xml_path)] = jp_result
-                        self.root.after(0, lambda i=index, t=total: self.status_var.set(f"オンラインROM・日本語タイトル照合中：{i}/{t}"))
+
+                        # Send each completed result to the Tk main thread immediately,
+                        # instead of waiting for the entire ROM list to finish.
+                        self.root.after(
+                            0,
+                            lambda row_iid=_iid, row_path=xml_path, dat=dat_title,
+                                   jp=jp_result, i=index, t=total:
+                                self._update_online_dat_row(row_iid, row_path, dat, jp, i, t)
+                        )
                 finally:
                     connection.close()
             except Exception as exc:
@@ -453,37 +463,37 @@ class GameListEditor:
 
         threading.Thread(target=worker, daemon=True).start()
 
+    def _update_online_dat_row(self, iid, xml_path: str, dat_title: str, jp: dict | None, index: int, total: int):
+        """Display one ROM's completed match on the Tk main thread."""
+        if self.tree is None or not self.tree.exists(iid):
+            return
+        key = normalized_xml_path(xml_path)
+        if dat_title:
+            self.online_titles[key] = dat_title
+            self.tree.set(iid, "online", dat_title)
+        if jp and jp.get("title"):
+            # Do not overwrite an existing dictionary/user choice.
+            if not self.tree_to_title.get(iid):
+                self.tree_to_title[iid] = jp["title"]
+                self.tree.set(iid, "candidate", jp["title"])
+                self.tree_to_status[iid] = "日本語タイトル取得"
+                self.tree.set(iid, "status", self.tree_to_status[iid])
+        elif dat_title and not self.tree_to_title.get(iid):
+            self.tree_to_status[iid] = "DAT一致・日本語未確認"
+            self.tree.set(iid, "status", self.tree_to_status[iid])
+        self.status_var.set(f"オンラインROM・日本語タイトル照合中：{index}/{total}（結果を順次表示中）")
+
     def _finish_online_dat(self, result, total: int):
         self.online_busy = False
         self.online_button.configure(state="normal")
         if result.get("error"):
             messagebox.showerror("オンラインROM照合エラー", result["error"])
-            self.status_var.set("オンラインROM照合に失敗しました。")
+            self.status_var.set("オンラインROM照合に失敗しました。途中までの照合結果は一覧に表示されています。")
             return
         self.online_titles.update(result.get("titles", {}))
         japanese_results = result.get("japanese", {})
-        assert self.tree is not None
-        dat_matched = 0
-        japanese_matched = 0
-        for iid in self.tree.get_children():
-            xml_path = self.tree_to_path.get(iid, "")
-            key = normalized_xml_path(xml_path)
-            dat_title = self.online_titles.get(key, "")
-            self.tree.set(iid, "online", dat_title)
-            jp = japanese_results.get(key)
-            if jp and jp.get("title"):
-                japanese_matched += 1
-                # Do not overwrite an existing dictionary/user choice.
-                if not self.tree_to_title.get(iid):
-                    self.tree_to_title[iid] = jp["title"]
-                    self.tree.set(iid, "candidate", jp["title"])
-                    self.tree_to_status[iid] = "日本語タイトル取得"
-                    self.tree.set(iid, "status", self.tree_to_status[iid])
-            elif dat_title:
-                dat_matched += 1
-                if not self.tree_to_title.get(iid):
-                    self.tree_to_status[iid] = "DAT一致・日本語未確認"
-                    self.tree.set(iid, "status", self.tree_to_status[iid])
+        dat_matched = len(result.get("titles", {}))
+        japanese_matched = sum(1 for jp in japanese_results.values() if jp and jp.get("title"))
         warning_count = len(result.get("warnings", []))
         detail = f"オンライン照合完了：日本語タイトル {japanese_matched}/{total} 件、DAT名のみ一致 {dat_matched} 件。"
         detail += " 日本語名は候補欄に設定しました。確認後に「日本語名を保存」を押してください。"
