@@ -163,7 +163,8 @@ def _fetch_page(platform: str, cache_dir: Path, log_path: Path | None = None) ->
         temp.replace(cache_path)
         return source
     except (OSError, urllib.error.URLError, TimeoutError, ValueError) as exc:
-        print(f"[emu-russia] {platform} ROM一覧の取得に失敗: {exc}")
+        _debug_log(log_path, f"一覧取得失敗: {type(exc).__name__}: {exc!r}")
+        print(f"[emu-russia] {platform} ROM一覧の取得に失敗: {type(exc).__name__}: {exc}")
         return None
 
 
@@ -273,7 +274,8 @@ def _search_catalogue_page(platform: str, filename: str, cache_dir: Path, log_pa
             print(f"[emu-russia] 検索結果にタイトル情報がありません: platform={platform}, keyword={query_words!r}")
             return result_page
         except (OSError, urllib.error.URLError, TimeoutError, ValueError) as exc:
-            print(f"[emu-russia] サイト内検索に失敗: platform={platform}, keyword={query_words!r}: {exc}")
+            _debug_log(log_path, f"検索リクエスト失敗: {type(exc).__name__}: {exc!r}")
+            print(f"[emu-russia] サイト内検索に失敗: platform={platform}, keyword={query_words!r}: {type(exc).__name__}: {exc}")
             return catalogue
 
     # If the page layout changes or no form can be identified, keep the old catalogue
