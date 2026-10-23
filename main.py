@@ -150,6 +150,8 @@ class GameListEditor:
         ttk.Button(action_row, text="日本語名候補を取得", command=self.scan_titles).pack(side="left", padx=6)
         self.online_button = ttk.Button(action_row, text="オンラインROM照合", command=self.scan_online_dat)
         self.online_button.pack(side="left", padx=(0, 6))
+        self.emu_russia_button = ttk.Button(action_row, text="emu-russiaのみ照合", command=self.scan_emu_russia_only)
+        self.emu_russia_button.pack(side="left", padx=(0, 6))
         ttk.Button(action_row, text="日本語名を保存", command=self.save_titles).pack(side="left")
         ttk.Button(action_row, text="辞書CSVを開く", command=self.open_dictionary).pack(side="left", padx=6)
 
@@ -370,6 +372,79 @@ class GameListEditor:
         self.status_var.set(f"辞書照合完了：{matched} 件一致。未取得の名称は手動入力できます。")
 
 
+
+    def scan_emu_russia_only(self):
+        """Look up Japanese titles using emu-russia only, without downloading DATs or querying other databases."""
+        if self.online_busy:
+            return
+        folder = self.folder()
+        if folder is None:
+            return
+        if self.xml_root is None or self.xml_path is None:
+            self.load_gamelist()
+            if self.xml_root is None or self.xml_path is None:
+                return
+
+        jobs = []
+        assert self.tree is not None
+        for iid in self.tree.get_children():
+            xml_path = self.tree_to_path.get(iid, "")
+            if not xml_path:
+                continue
+            relative = xml_path.replace("\\", "/").removeprefix("./")
+            rom_path = (folder / relative).resolve()
+            if rom_path.is_file():
+                jobs.append((iid, xml_path, rom_path))
+
+        if not jobs:
+            messagebox.showinfo("emu-russiaのみ照合", "照合対象のROMファイルがありません。")
+            return
+
+        local_appdata = os.environ.get("LOCALAPPDATA")
+        cache_root = Path(local_appdata) / "gamelist_editor" / "romtitler" if local_appdata else Path.home() / ".gamelist_editor" / "romtitler"
+        self.online_busy = True
+        self.online_button.configure(state="disabled")
+        self.emu_russia_button.configure(state="disabled")
+        self.status_var.set("emu-russia の国内版タイトルを照合しています…")
+
+        def worker():
+            matched = 0
+            errors = []
+            try:
+                total = len(jobs)
+                for index, (iid, xml_path, rom_path) in enumerate(jobs, 1):
+                    try:
+                        jp_result = lookup_emu_russia_title(folder.name, rom_path.name, cache_root)
+                    except Exception as exc:
+                        jp_result = None
+                        errors.append(f"{rom_path.name}: {exc}")
+                    if jp_result and jp_result.get("title"):
+                        matched += 1
+                    self.root.after(
+                        0,
+                        lambda row_iid=iid, row_path=xml_path, jp=jp_result, i=index, t=total:
+                            self._update_online_dat_row(row_iid, row_path, "", jp, i, t)
+                    )
+                self.root.after(0, lambda: self._finish_emu_russia_only(matched, total, errors))
+            except Exception as exc:
+                self.root.after(0, lambda error=str(exc): self._finish_emu_russia_only(matched, len(jobs), errors + [error]))
+
+        threading.Thread(target=worker, daemon=True).start()
+
+    def _finish_emu_russia_only(self, matched: int, total: int, errors: list[str]):
+        self.online_busy = False
+        self.online_button.configure(state="normal")
+        self.emu_russia_button.configure(state="normal")
+        detail = f"emu-russia の照合完了：日本語タイトル {matched}/{total} 件。"
+        detail += " 取得した候補を確認し、「日本語名を保存」でXMLへ保存してください。"
+        if errors:
+            detail += f"\n取得時のエラー：{len(errors)} 件"
+        self.status_var.set(detail)
+        if errors:
+            messagebox.showwarning("emu-russiaのみ照合", detail + "\n\n" + "\n".join(errors[:8]))
+        else:
+            messagebox.showinfo("emu-russiaのみ照合", detail)
+
     def scan_online_dat(self):
         """Download/update public DATs and match registered ROMs without blocking the GUI."""
         if self.online_busy:
@@ -403,6 +478,7 @@ class GameListEditor:
         db_path = cache_root / "romtitler.sqlite3"
         self.online_busy = True
         self.online_button.configure(state="disabled")
+        self.emu_russia_button.configure(state="disabled")
         self.status_var.set("オンラインDATを取得・更新しています。完了までお待ちください…")
 
         def worker():
@@ -489,6 +565,7 @@ class GameListEditor:
     def _finish_online_dat(self, result, total: int):
         self.online_busy = False
         self.online_button.configure(state="normal")
+        self.emu_russia_button.configure(state="normal")
         if result.get("error"):
             messagebox.showerror("オンラインROM照合エラー", result["error"])
             self.status_var.set("オンラインROM照合に失敗しました。途中までの照合結果は一覧に表示されています。")
